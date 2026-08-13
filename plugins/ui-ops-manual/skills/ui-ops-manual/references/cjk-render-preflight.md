@@ -7,7 +7,7 @@
 1. 依 `word-render` 的 `--check-only` 判定本次最終 renderer；記錄 `word` 或 `libreoffice`、engine 與 fallback reason。
 2. 為本次文件選擇一個**明確的 CJK 字型名稱**，並在 live text run 設定 `w:rFonts/@w:eastAsia` 與 `w:lang/@w:eastAsia="zh-TW"`。不得將「或等效字型」寫成未經驗證的實作。
 3. 使用本外掛的 `scripts/create_cjk_probe.py` 產生暫存 probe DOCX。probe 包含 `繁體中文／臺灣／龜麵／險別管理／儲存／取消／欄位說明` 等 live text；不得以截圖取代。
-4. 用與正式文件**相同的 renderer、環境變數與輸出路徑**渲染 probe，產生 PNG 並以 100% 檢視。
+4. 用與正式文件**相同的 renderer、環境變數、`--work-dir` 與 fallback policy** 渲染 probe，產生 PNG 並以 100% 檢視。若本技能採用 Word renderer，固定工作根目錄與 fallback 決策必須遵守 [safe-word-render-policy.md](safe-word-render-policy.md)。
 
 範例（`<skill-path>` 為本 `SKILL.md` 所在目錄）：
 
