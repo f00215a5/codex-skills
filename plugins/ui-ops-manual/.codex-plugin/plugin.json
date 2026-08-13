@@ -1,0 +1,27 @@
+{
+  "name": "ui-ops-manual",
+  "version": "0.1.0+codex.20260813090347",
+  "description": "Create verified system UI operation manuals with annotated screenshots.",
+  "author": {
+    "name": "Derick"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "UI \u64cd\u4f5c\u8aaa\u660e\u66f8",
+    "shortDescription": "Create verified UI manuals with screenshots.",
+    "longDescription": "Create system UI operation manuals with annotated controls, field definitions, task flows, and Word-first rendering checks.",
+    "developerName": "Derick",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use $ui-ops-manual to create a UI\u64cd\u4f5c\u8aaa\u660e\u66f8 with annotated screenshots.",
+      "Use $ui-ops-manual to revise this DOCX UI user guide."
+    ],
+    "composerIcon": "./skills/ui-ops-manual/assets/ui-ops-manual-small.svg",
+    "logo": "./skills/ui-ops-manual/assets/ui-ops-manual-large.svg",
+    "logoDark": "./skills/ui-ops-manual/assets/ui-ops-manual-large.svg"
+  }
+}
