@@ -57,6 +57,18 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 同時確認登入／測試資料的授權範圍。只用於取證；遮蔽密碼、權杖、個資與不應外流的業務資料。遇到會寫入、送出、刪除或觸發排程的 UI 動作，先取得當下確認。
 
+## 初始化：CJK renderer 預檢
+
+範圍確認後、擷取畫面與建立正式 DOCX 前，若文件會包含繁中、簡中、日文或其他 CJK **live text**，必須閱讀 [references/cjk-render-preflight.md](references/cjk-render-preflight.md) 並完成其初始化關卡。
+
+- 先依 `word-render --check-only` 確認本次最終 renderer；Word-first 不等於已證明 CJK 可讀。
+- 選定一個**明確且可驗證**的 CJK 字型名稱，並用本外掛的 `create_cjk_probe.py` 產生含 `eastAsia` 字型與 `zh-TW` 語言標記的暫存 probe。
+- 以**同一條** Word 或 LibreOffice renderer 路徑渲染 probe、逐頁 100% 檢視；PDF／PNG 存在或 exit code 0 都不足以代表通過。
+- 僅當最終 renderer 為 LibreOffice 且 probe 有方框／缺字時，才向使用者索取已核准的字型目錄，使用 `create_fontconfig_config.py` 建立**任務限定**的 `FONTCONFIG_FILE` 後重試。不得安裝字型或修改永久環境變數。
+- Word probe 失敗時，確認 Word 可使用的字型或改選另一個已驗證字型；不要套用 Fontconfig。
+
+未通過 CJK glyph 預檢時，不得宣稱文件已完成視覺渲染驗證；可繼續結構檢查，但須明確回報限制。
+
 ## 取得目標與版本依據
 
 1. 以使用者提供的 URL／清單為準。若沒有清單，先請使用者提供，不以選單名稱推測範圍。
@@ -106,8 +118,8 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 1. 檢查章節、圖說、紅框標註、每章編號重設、欄位表，以及更新紀錄是否齊全。
 2. 檢查所有資料變更操作都有成功影響、鎖定條件、失敗／取消行為與操作後檢核。
-3. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md) 將渲染暫存與設定檔導向可寫入工作區，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試或備援。
-4. 若已安裝 `word-render`，必須使用其 Word-first `--check-only` 與最終渲染流程，逐頁檢視 PNG，並回報**最終實際 renderer**。沒有此技能時，使用可用的 `documents` 渲染流程。
+3. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md) 將渲染暫存與設定檔導向可寫入工作區，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試或備援；含 CJK live text 時，CJK glyph 預檢必須先通過。
+4. 若已安裝 `word-render`，必須使用其 Word-first `--check-only` 與最終渲染流程，逐頁檢視 PNG，並回報**最終實際 renderer**。沒有此技能時，使用可用的 `documents` 渲染流程；無論哪條路徑，不能以 exit code 0 取代 CJK glyph 檢視。
 5. 渲染失敗或工具不存在時，執行結構／封裝檢查並明確說明限制；**不得宣稱已完成渲染驗證**。
 6. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
 
