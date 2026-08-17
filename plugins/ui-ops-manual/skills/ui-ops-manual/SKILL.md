@@ -57,6 +57,28 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 同時確認登入／測試資料的授權範圍。只用於取證；遮蔽密碼、權杖、個資與不應外流的業務資料。遇到會寫入、送出、刪除或觸發排程的 UI 動作，先取得當下確認。
 
+## 初始化：CJK renderer 預檢
+
+範圍確認後、擷取畫面與建立正式 DOCX 前，若文件會包含繁中、簡中、日文或其他 CJK **live text**，必須閱讀 [references/cjk-render-preflight.md](references/cjk-render-preflight.md) 並完成其初始化關卡。
+
+- 先依本技能的 [安全 Word renderer 政策](references/safe-word-render-policy.md) 執行 `word-render --check-only`，確認本次最終 renderer；Word-first 不等於已證明 CJK 可讀。
+- 選定一個**明確且可驗證**的 CJK 字型名稱，並用本外掛的 `create_cjk_probe.py` 產生含 `eastAsia` 字型與 `zh-TW` 語言標記的暫存 probe。
+- 以**同一條** Word 或 LibreOffice renderer 路徑渲染 probe、逐頁 100% 檢視；PDF／PNG 存在或 exit code 0 都不足以代表通過。
+- 僅當最終 renderer 為 LibreOffice 且 probe 有方框／缺字時，才向使用者索取已核准的字型目錄，使用 `create_fontconfig_config.py` 建立**任務限定**的 `FONTCONFIG_FILE` 後重試。不得安裝字型或修改永久環境變數。
+- Word probe 失敗時，確認 Word 可使用的字型或改選另一個已驗證字型；不要套用 Fontconfig。
+
+未通過 CJK glyph 預檢時，不得宣稱文件已完成視覺渲染驗證；可繼續結構檢查，但須明確回報限制。
+
+## 初始化：安全 Word renderer 政策（僅本技能）
+
+完成範圍確認後、首次 renderer 預檢前，必須閱讀 [references/safe-word-render-policy.md](references/safe-word-render-policy.md)。此政策只作用於本機目前使用者的 `ui-ops-manual` 任務；不改變使用者直接呼叫 `word-render` 或其他技能時的 fallback 行為。
+
+- 所有由本技能發出的 Word probe 與 Word render，均使用同一個持久工作根目錄 `~/.codex/tmp/word-render`，並以 `--work-dir` 傳入。不可改成每個專案、每個文件或每個任務各自要求新的目錄權限。
+- 預設安全模式是 `--fallback-policy deny`：Word 或固定工作根目錄遇到權限失敗時停止，**不得**自行切換 LibreOffice。
+- 僅在首次實際失敗且尚未記住偏好時，才詢問使用者是否本次使用 LibreOffice，以及下次要再詢問或沿用本次選項；不可在一般任務初始化時預先詢問。
+- 偏好僅保存 `allow`／`deny` 這個 renderer policy，不保存文件路徑、repository、帳號、字型或畫面內容。設定不存在、損毀或不合法時一律視為「再次詢問」。
+- 使用者明確說「重設 UI 操作說明書渲染政策」時，依參考流程移除該偏好；下次實際失敗會再次詢問。
+
 ## 取得目標與版本依據
 
 1. 以使用者提供的 URL／清單為準。若沒有清單，先請使用者提供，不以選單名稱推測範圍。
@@ -106,8 +128,8 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 1. 檢查章節、圖說、紅框標註、每章編號重設、欄位表，以及更新紀錄是否齊全。
 2. 檢查所有資料變更操作都有成功影響、鎖定條件、失敗／取消行為與操作後檢核。
-3. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md) 將渲染暫存與設定檔導向可寫入工作區，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試或備援。
-4. 若已安裝 `word-render`，必須使用其 Word-first `--check-only` 與最終渲染流程，逐頁檢視 PNG，並回報**最終實際 renderer**。沒有此技能時，使用可用的 `documents` 渲染流程。
+3. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md) 與 [references/safe-word-render-policy.md](references/safe-word-render-policy.md) 使用固定的安全 Word 工作根目錄，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試、停止或經使用者確認的備援；含 CJK live text 時，CJK glyph 預檢必須先通過。
+4. 若已安裝 `word-render`，必須使用其 Word-first `--check-only` 與最終渲染流程，逐頁檢視 PNG，並回報**最終實際 renderer**。本技能不可在 Word 權限失敗時自行使用 `documents`；依安全 renderer 政策取得本次或已記住的明確允許後，才可採用 LibreOffice。沒有 `word-render` 時，先說明無法執行 Word-first 驗證並取得使用者確認，再使用可用的 `documents` 渲染流程；無論哪條路徑，不能以 exit code 0 取代 CJK glyph 檢視。
 5. 渲染失敗或工具不存在時，執行結構／封裝檢查並明確說明限制；**不得宣稱已完成渲染驗證**。
 6. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
 
@@ -119,7 +141,7 @@ description: Use when creating or revising a system UI 操作說明書, user man
 | repository/tag 有變更但未列出畫面 | 從前端差異提出候選清單，再由使用者確認。 |
 | 畫面找不到欄位限制 | 明列待確認，勿自行補上。 |
 | 成功儲存後就結束 | 加入資料、下游流程、鎖定規則與回查步驟。 |
-| Word 預檢在沙箱失敗 | 先導向可寫入暫存／設定檔再判斷；權限錯誤不等於 Word 不可用。 |
+| Word 預檢在沙箱失敗 | 使用固定 `~/.codex/tmp/word-render` 根目錄重試；仍失敗時依安全 renderer 政策停止或詢問，權限錯誤不等於 Word 不可用。 |
 | 紅框在渲染後跑版 | 先在原始 PNG 與標註 PNG 做 100% 語意檢核；DOCX 渲染只驗證版面與縮放。 |
 | 新章步驟續號 | 為每個操作小節建立獨立編號定義，從 1 起算。 |
 | 更新紀錄插在章節末 | 整併到文件末頁的單一表格。 |

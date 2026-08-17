@@ -45,12 +45,15 @@ manifest 必須保留**原始截圖尺寸**、控制項名稱、座標、caption
 - 需要使用者設定檔的 renderer，將 `XDG_CONFIG_HOME`、`XDG_CACHE_HOME`（及適用的 HOME／profile 路徑）指向同一可寫入工作區下的子目錄。
 - 不修改使用者的永久環境變數，也**不建立 LibreOffice 工作區**。LibreOffice 只是可用時的備援 renderer；它使用的暫存／設定檔仍是本次工作目錄。
 
+若 DOCX 含 CJK live text，先依 [cjk-render-preflight.md](cjk-render-preflight.md) 用與正式文件相同的 renderer 驗證最小 glyph probe。PDF／PNG 產生成功但 probe 出現方框、替代字元或不可讀文字時，分類為 **CJK glyph 預檢失敗**；不可宣稱渲染驗證已通過。只有 LibreOffice 路徑可使用任務限定的 `FONTCONFIG_FILE` 重試；Word 路徑需改用 Word 可讀的已驗證字型。
+
 依 `word-render` 先跑 `--check-only`，再渲染最終 DOCX。預檢失敗時使用下表，不把一次受限環境的錯誤誤報為 Word 未安裝。
 
 | 類別 | 可觀察證據 | 後續處理與回報 |
 | --- | --- | --- |
 | **沙箱／路徑權限受限** | TEMP/TMP、XDG 設定檔或 profile 不可寫；存取拒絕；受限沙箱中的 COM 事件啟動失敗，例如「Word 無法開始事件」。 | 先以可寫入工作區路徑重試；仍受限時，在**已核准的本機互動環境**重試。記錄初次限制與重試結果；不得宣稱 **Word 不可用**。 |
 | **Word 不可用** | 已設定可寫入路徑後，互動環境仍無法建立 Word COM 或 `word-render` 的 evidence 明確回報 Word route 不可用。 | 以 `documents`／LibreOffice 備援（若可用）或執行結構檢查；回報這是最終工具狀態與原因。 |
+| **CJK glyph 預檢失敗** | 最終 renderer 產生 PDF／PNG，但 live CJK probe 出現方框、替代字元或不可讀文字。 | Word：使用 Word 可讀的已驗證 CJK 字型重跑。LibreOffice：取得使用者確認的字型目錄，建立任務限定 Fontconfig 後重跑。兩者均不可把 exit code 0 當成通過。 |
 | **文件或其他渲染失敗** | Word 可啟動，但特定 DOCX 匯出／轉檔失敗。 | 保留 evidence，修正文件或依 `word-render` 記錄 fallback reason；不要歸因為紅框座標問題。 |
 
 交付時記錄**最終實際 renderer**、engine、Word／Office 版本（若有）、頁數、是否有 fallback，以及與初次失敗相關的路徑處理。只描述最後成功的 renderer；不要將備援工具的存在寫成已建立其工作區。
