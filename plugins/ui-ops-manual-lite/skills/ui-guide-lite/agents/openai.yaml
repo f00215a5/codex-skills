@@ -4,4 +4,4 @@ interface:
   icon_small: "./assets/ui-ops-manual-lite-small.svg"
   icon_large: "./assets/ui-ops-manual-lite-large.svg"
   brand_color: "#1F7A6D"
-  default_prompt: "Use $ui-ops-manual-lite 協助我製作含截圖與欄位說明的系統 UI 操作說明書（無需 Word／LibreOffice）。"
+  default_prompt: "Use $ui-guide-lite 協助我製作含截圖與欄位說明的系統 UI 操作說明書（無需 Word／LibreOffice）。"

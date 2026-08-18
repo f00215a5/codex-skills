@@ -1,6 +1,6 @@
 {
   "name": "ui-ops-manual",
-  "version": "0.1.0+codex.20260813212129",
+  "version": "0.1.0+codex.20260818153633",
   "description": "Create verified system UI operation manuals with annotated screenshots.",
   "author": {
     "name": "Derick"
@@ -17,11 +17,11 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Use $ui-ops-manual to create a UI\u64cd\u4f5c\u8aaa\u660e\u66f8 with annotated screenshots.",
-      "Use $ui-ops-manual to revise this DOCX UI user guide."
+      "Use $ui-guide to create a UI\u64cd\u4f5c\u8aaa\u660e\u66f8 with annotated screenshots.",
+      "Use $ui-guide to revise this DOCX UI user guide."
     ],
-    "composerIcon": "./skills/ui-ops-manual/assets/ui-ops-manual-small.svg",
-    "logo": "./skills/ui-ops-manual/assets/ui-ops-manual-large.svg",
-    "logoDark": "./skills/ui-ops-manual/assets/ui-ops-manual-large.svg"
+    "composerIcon": "./skills/ui-guide/assets/ui-ops-manual-small.svg",
+    "logo": "./skills/ui-guide/assets/ui-ops-manual-large.svg",
+    "logoDark": "./skills/ui-guide/assets/ui-ops-manual-large.svg"
   }
 }

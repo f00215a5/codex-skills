@@ -1,5 +1,5 @@
 ---
-name: ui-ops-manual
+name: ui-guide
 description: Use when creating or revising a system UI 操作說明書, user manual, or DOCX guide that needs screen captures, annotated controls, field definitions, operation steps, and release-aware evidence.
 ---
 
