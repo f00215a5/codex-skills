@@ -1,6 +1,6 @@
 {
   "name": "ui-ops-manual",
-  "version": "0.1.0+codex.20260818160547",
+  "version": "0.2.0+codex.20260818161258",
   "description": "Create verified system UI operation manuals with annotated screenshots.",
   "author": {
     "name": "Derick"
