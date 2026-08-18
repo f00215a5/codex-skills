@@ -1,5 +1,5 @@
 ---
-name: ui-ops-manual-lite
+name: ui-guide-lite
 description: Use when creating or revising a 系統 UI 操作說明書, user manual, or DOCX guide that needs screen captures, annotated controls, field definitions, operation steps, and release-aware evidence, and Word/LibreOffice/word-render must not or cannot be used. Python-only via a local venv.
 ---
 
