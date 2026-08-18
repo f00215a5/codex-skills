@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from PIL import Image
+from docx import Document
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 BUILD_SCRIPT = SCRIPTS / "build_docx.py"
@@ -148,6 +149,22 @@ class BuildAndVerifyTests(unittest.TestCase):
         with zipfile.ZipFile(self.docx_path) as archive:
             bad = archive.testzip()
         self.assertIsNone(bad)
+
+    def test_update_log_is_the_first_heading_and_table_after_the_title(self) -> None:
+        build = run(BUILD_SCRIPT, "--manifest", str(self.manifest_path), "--output", str(self.docx_path))
+        self.assertEqual(build.returncode, 0, build.stderr)
+
+        document = Document(self.docx_path)
+        headings = [
+            paragraph.text
+            for paragraph in document.paragraphs
+            if paragraph.style.name.startswith("Heading")
+        ]
+        self.assertEqual(headings[:2], ["更新紀錄", "修訂狀態"])
+        self.assertEqual(
+            [cell.text for cell in document.tables[0].rows[0].cells][:3],
+            ["版本", "日期", "更新內容"],
+        )
 
 
 if __name__ == "__main__":

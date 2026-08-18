@@ -130,10 +130,11 @@ def main() -> int:
     for required in ("修訂狀態", "使用提醒", "共通操作規則", "更新紀錄"):
         reporter.check(f"heading present: {required}", required in heading_texts)
     log_position = heading_texts.index("更新紀錄") if "更新紀錄" in heading_texts else -1
-    reporter.check("更新紀錄 is the last heading",
-                   log_position != -1 and log_position == len(heading_texts) - 1)
-    order = [text for text in heading_texts if text in ("修訂狀態", "使用提醒", "共通操作規則")]
-    reporter.check("heading order 修訂狀態→使用提醒→共通操作規則", order == ["修訂狀態", "使用提醒", "共通操作規則"])
+    reporter.check("更新紀錄 is the first heading",
+                   log_position == 0)
+    order = [text for text in heading_texts if text in ("更新紀錄", "修訂狀態", "使用提醒", "共通操作規則")]
+    reporter.check("heading order 更新紀錄→修訂狀態→使用提醒→共通操作規則",
+                   order == ["更新紀錄", "修訂狀態", "使用提醒", "共通操作規則"])
 
     # -- independent step numbering per section ----------------------------- #
     numbered = numbered_paragraphs(document)
@@ -174,11 +175,11 @@ def main() -> int:
 
     # -- update log --------------------------------------------------------- #
     if tables:
-        last_table_headers = table_headers(tables[-1])
-        reporter.check("update log is the last table",
-                       last_table_headers[:3] == ["版本", "日期", "更新內容"],
-                       detail=f"headers={last_table_headers}")
-        reporter.check("update log has data rows", len(tables[-1].rows) >= 2)
+        first_table_headers = table_headers(tables[0])
+        reporter.check("update log is the first table",
+                       first_table_headers[:3] == ["版本", "日期", "更新內容"],
+                       detail=f"headers={first_table_headers}")
+        reporter.check("update log has data rows", len(tables[0].rows) >= 2)
 
     # -- captions vs images ------------------------------------------------- #
     # 紅框編號是每張圖獨立重編（同張圖內的控制項對照），所以不要求全域唯一。
