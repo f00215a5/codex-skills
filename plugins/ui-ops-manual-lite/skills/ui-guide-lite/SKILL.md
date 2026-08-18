@@ -1,11 +1,11 @@
 ---
 name: ui-guide-lite
-description: Use when creating or revising a 系統 UI 操作說明書, user manual, or DOCX guide that needs screen captures, annotated controls, field definitions, operation steps, and release-aware evidence, and Word/LibreOffice/word-render must not or cannot be used. Python-only via a local venv.
+description: Use when creating or revising a 系統 UI 操作說明書, user manual, or DOCX guide that needs screen captures, annotated controls, field definitions, operation steps, release-aware evidence, and a Python-only document workflow.
 ---
 
 # UI 操作說明書（輕量版）
 
-建立可操作、可驗證的系統 UI 說明書。先確認畫面範圍與預設模板；用實機和來源證據描述畫面，而不是猜測控制項或後續影響。本版只依賴 Python 與本地 venv（python-docx、Pillow），**不呼叫** Word、LibreOffice 或 `word-render`，也不進行視覺渲染驗證；文件品質由標註語意 QA 與 DOCX 結構 QA 把關。
+建立可操作、可驗證的系統 UI 說明書。先確認畫面範圍與預設模板；用實機和來源證據描述畫面，而不是猜測控制項或後續影響。本版**僅依賴 Python 與本地 venv**（python-docx、Pillow）建立 DOCX 與完成標註語意／結構 QA，**不需要外部文件引擎**。視覺驗證範圍只在對話中回報，不加入交付文件。
 
 ## 新任務第一輪回覆（強制）
 
@@ -53,7 +53,7 @@ description: Use when creating or revising a 系統 UI 操作說明書, user man
 | 標註 | 啟用 | 點擊或輸入處以**紅色方框**和編號標示；必要時加游標 icon。 |
 | 成功影響 | 啟用 | 每一項會改變資料的操作，均說明**修改成功後的影響**與檢核方式。 |
 | 交付 | 必要 | 文件名稱、初始版本與**交付資料夾**。未提供時詢問，勿將檔案寫到未授權位置。 |
-| 結構驗證 | 啟用 | 組檔後以 `verify_docx.py` 驗證結構與語意；**不做** Word／LibreOffice 視覺渲染驗證。 |
+| 結構驗證 | 啟用 | 組檔後以 `verify_docx.py` 驗證結構與語意；視覺驗證範圍另於對話回報。 |
 
 同時確認登入／測試資料的授權範圍。只用於取證；遮蔽密碼、權杖、個資與不應外流的業務資料。遇到會寫入、送出、刪除或觸發排程的 UI 動作，先取得當下確認。
 
@@ -140,7 +140,7 @@ python3 "<skill-path>/scripts/bootstrap.py"
 
 全部檢查通過（exit code 0）才算完成；任何一項失敗，修正後重新組檔再驗證。**exit code 0 只代表結構與語意檢查通過**，不代表視覺上可讀。
 
-4. **告知本版界限**：本版不做 Word／LibreOffice 視覺渲染驗證；開啟後的字型取代、分頁斷行、圖片縮放等視覺結果，請使用者以實際文書軟體確認。使用者需要渲染驗證時，改用完整版 `ui-ops-manual` 技能。
+4. **對話中向使用者回報驗證範圍**：說明結構與語意檢查結果，以及仍需以實際文書軟體確認的視覺結果。這類執行環境與驗證範圍**不得寫入 DOCX**；交付文件只保留使用者確認的操作內容。使用者需要渲染驗證時，改用完整版 `$ui-guide`。
 5. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
 
 ## 常見錯誤
@@ -155,4 +155,5 @@ python3 "<skill-path>/scripts/bootstrap.py"
 | 新章步驟續號 | 每個操作小節獨立編號（build_docx.py 每次建立新 numId），從 1 起算。 |
 | 更新紀錄插在章節末 | 整併到文件末頁的單一表格。 |
 | 宣稱「渲染驗證通過」 | 本版不做渲染驗證；只陳述結構驗證結果並請使用者開啟確認。 |
+| 將執行環境或驗證範圍寫入文件 | 只在對話中向使用者回報；DOCX 保留操作內容。 |
 | 未建立 venv 就直接跑腳本 | 先執行 `bootstrap.py`，一律使用 `~/.codex/venvs/ui-ops-manual-lite/bin/python`。 |

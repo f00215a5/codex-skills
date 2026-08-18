@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Programmatic structure QA for the generated manual DOCX (python-docx only).
+"""Programmatic structure QA for the generated manual DOCX (Python-only).
 
-This is the replacement for Word/LibreOffice rendering QA in the lite skill:
-it checks what is verifiable without a renderer — structure, numbering restarts,
+It checks the verifiable document contract — structure, numbering restarts,
 tables, captions vs images, page setup, package integrity — and fails closed
 when any check fails.
 
 Usage:
     <venv-python> verify_docx.py --docx manual.docx [--manifest manual.json]
 
-Exit code 0 == all checks passed.  Visual fidelity after opening the file in
-Word/WPS/LibreOffice remains the user's review step, not this script's claim.
+Exit code 0 == all structure checks passed. Visual review scope is reported in
+the conversation, not added to the generated manual.
 """
 
 from __future__ import annotations
