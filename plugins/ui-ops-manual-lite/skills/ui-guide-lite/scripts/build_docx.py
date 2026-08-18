@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build the UI manual DOCX from a structured manifest (python-docx only).
+"""Build the UI manual DOCX from a structured manifest (Python-only).
 
-No Word, LibreOffice or word-render involved: the document is written
-deterministically and afterwards validated by verify_docx.py.  This skill
-does not claim visual rendering verification; final fidelity depends on the
-application that opens the DOCX (see references/document-structure-qa.md).
+The document is written deterministically and afterwards validated by
+verify_docx.py. Runtime availability and visual-verification limitations are
+reported in the conversation; this builder rejects those warnings as DOCX
+content (see references/document-structure-qa.md).
 
 Usage:
     <venv-python> build_docx.py --manifest manual.json --output manual.docx
@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -73,6 +74,19 @@ DEFAULT_FONT = "Microsoft JhengHei"
 PAGE_W, PAGE_H = 8.5, 11.0
 MARGIN_LEFT = MARGIN_RIGHT = 0.65
 MARGIN_TOP, MARGIN_BOTTOM = 0.67, 0.59
+RUNTIME_TOOL_PATTERN = re.compile(
+    r"(?<![a-z])(?:word-render|libreoffice|word)(?![a-z])", re.IGNORECASE
+)
+RUNTIME_AVAILABILITY_MARKERS = (
+    "未安裝",
+    "不可用",
+    "無法使用",
+    "無法執行",
+    "not installed",
+    "unavailable",
+    "not available",
+    "cannot use",
+)
 
 BULLET_ABSNUM = """<w:abstractNum xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:abstractNumId="{abs_id}">
   <w:multiLevelType w:val="hybridMultilevel"/>
@@ -105,7 +119,30 @@ def load_manifest(path: Path) -> dict[str, Any]:
     for key in ("title", "revision", "chapter", "updateLog"):
         if key not in payload:
             raise ValueError(f"{path}: missing required key {key!r}")
+    reject_runtime_availability_warnings(payload)
     return payload
+
+
+def iter_manifest_strings(value: Any, path: str = "$") -> Iterable[tuple[str, str]]:
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, dict):
+        for key, nested in value.items():
+            yield from iter_manifest_strings(nested, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            yield from iter_manifest_strings(nested, f"{path}[{index}]")
+
+
+def reject_runtime_availability_warnings(manifest: dict[str, Any]) -> None:
+    for path, text in iter_manifest_strings(manifest):
+        normalized = re.sub(r"\s+", " ", text.casefold())
+        mentions_tool = RUNTIME_TOOL_PATTERN.search(normalized) is not None
+        mentions_availability = any(marker in normalized for marker in RUNTIME_AVAILABILITY_MARKERS)
+        if mentions_tool and mentions_availability:
+            raise ValueError(
+                f"{path}: runtime availability warning must be reported in chat, not DOCX"
+            )
 
 
 def base_dir(manifest: dict[str, Any], manifest_path: Path) -> Path:

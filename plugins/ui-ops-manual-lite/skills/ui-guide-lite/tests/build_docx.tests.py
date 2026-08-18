@@ -109,6 +109,27 @@ class BuildAndVerifyTests(unittest.TestCase):
         self.assertNotEqual(build.returncode, 0)
         self.assertIn("image not found", build.stderr)
 
+    def test_runtime_availability_warning_is_rejected(self) -> None:
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        manifest["usageReminders"] = ["word-render 未安裝，LibreOffice 不可用。"]
+        self.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        build = run(BUILD_SCRIPT, "--manifest", str(self.manifest_path), "--output", str(self.docx_path))
+
+        self.assertNotEqual(build.returncode, 0)
+        self.assertIn("runtime availability warning", build.stderr)
+        self.assertFalse(self.docx_path.exists())
+
+    def test_runtime_warning_guard_allows_password_content(self) -> None:
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        manifest["usageReminders"] = ["Password unavailable 時請依系統錯誤訊息重設密碼。"]
+        self.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        build = run(BUILD_SCRIPT, "--manifest", str(self.manifest_path), "--output", str(self.docx_path))
+
+        self.assertEqual(build.returncode, 0, build.stderr)
+        self.assertTrue(self.docx_path.is_file())
+
     def test_verify_catches_empty_update_log(self) -> None:
         manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         manifest["updateLog"] = []

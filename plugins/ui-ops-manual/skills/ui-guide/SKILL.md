@@ -131,7 +131,8 @@ description: Use when creating or revising a system UI 操作說明書, user man
 3. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md) 與 [references/safe-word-render-policy.md](references/safe-word-render-policy.md) 使用固定的安全 Word 工作根目錄，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試、停止或經使用者確認的備援；含 CJK live text 時，CJK glyph 預檢必須先通過。
 4. 若已安裝 `word-render`，必須使用其 Word-first `--check-only` 與最終渲染流程，逐頁檢視 PNG，並回報**最終實際 renderer**。本技能不可在 Word 權限失敗時自行使用 `documents`；依安全 renderer 政策取得本次或已記住的明確允許後，才可採用 LibreOffice。沒有 `word-render` 時，先說明無法執行 Word-first 驗證並取得使用者確認，再使用可用的 `documents` 渲染流程；無論哪條路徑，不能以 exit code 0 取代 CJK glyph 檢視。
 5. 渲染失敗或工具不存在時，執行結構／封裝檢查並明確說明限制；**不得宣稱已完成渲染驗證**。
-6. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
+6. **對話中向使用者回報**本次 renderer、工具可用性、權限失敗、fallback 與未完成的視覺驗證；這些執行環境結果**不得寫入 DOCX**。交付文件只保留使用者確認的操作內容，不得以「使用提醒」、表格或更新紀錄包裝執行環境警語。
+7. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
 
 ## 常見錯誤
 
