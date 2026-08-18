@@ -1,6 +1,6 @@
 {
   "name": "ui-ops-manual-lite",
-  "version": "0.1.0+codex.20260818154953",
+  "version": "0.1.0+codex.20260818160547",
   "description": "Create verified system UI operation manuals with annotated screenshots. Python-only local venv and structure QA; no external document engine.",
   "author": {
     "name": "Derick"

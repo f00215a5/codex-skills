@@ -112,11 +112,11 @@ python3 "<skill-path>/scripts/bootstrap.py"
 開始排版前閱讀 [references/document-structure-qa.md](references/document-structure-qa.md)（版面基線與驗收標準）。把擷取結果整理成 build manifest（JSON），結構與全部欄位見 `scripts/build_docx.py` 的 docstring。文件順序固定為：
 
 1. 標題區塊：標題、副標題、適用畫面。
-2. 修訂狀態：版本、日期、本次修訂摘要。
-3. 版本依據：僅在有可驗證 repository／tag／release 資訊時出現。
-4. 使用提醒與共通操作規則。
-5. 一個目標功能一章：入口、前置條件、操作流程、UI 說明、成功影響、檢核。
-6. **文件末頁**：單一「**更新紀錄**」表格，集中列出所有版本。
+2. **更新紀錄**：標題區塊正下方的單一表格，集中列出所有版本。
+3. 修訂狀態：版本、日期、本次修訂摘要。
+4. 版本依據：僅在有可驗證 repository／tag／release 資訊時出現。
+5. 使用提醒與共通操作規則。
+6. 一個目標功能一章：入口、前置條件、操作流程、UI 說明、成功影響、檢核。
 
 組檔：
 
@@ -153,7 +153,7 @@ python3 "<skill-path>/scripts/bootstrap.py"
 | 成功儲存後就結束 | 加入資料、下游流程、鎖定規則與回查步驟。 |
 | 紅框座標在圖上就不對 | 回到 raw 圖與 manifest 做 100% 檢核後重畫；組 DOCX 前修正，勿指望嵌入後自動變對。 |
 | 新章步驟續號 | 每個操作小節獨立編號（build_docx.py 每次建立新 numId），從 1 起算。 |
-| 更新紀錄插在章節末 | 整併到文件末頁的單一表格。 |
+| 更新紀錄插在章節末 | 維持標題區塊正下方的單一表格。 |
 | 宣稱「渲染驗證通過」 | 本版不做渲染驗證；只陳述結構驗證結果並請使用者開啟確認。 |
 | 將執行環境或驗證範圍寫入文件 | 只在對話中向使用者回報；DOCX 保留操作內容。 |
 | 未建立 venv 就直接跑腳本 | 先執行 `bootstrap.py`，一律使用 `~/.codex/venvs/ui-ops-manual-lite/bin/python`。 |

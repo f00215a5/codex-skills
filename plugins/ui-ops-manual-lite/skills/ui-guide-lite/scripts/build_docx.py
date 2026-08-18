@@ -425,7 +425,6 @@ def add_chapter(document: DocumentType, manifest: dict[str, Any], base: Path, fo
 
 
 def add_update_log(document: DocumentType, update_log: list[dict[str, Any]]) -> None:
-    document.add_page_break()
     add_heading(document, "更新紀錄", 1)
     rows = [[entry.get("version", ""), entry.get("date", ""), entry.get("changes", "")]
             for entry in update_log]
@@ -438,12 +437,12 @@ def build(document: DocumentType, manifest: dict[str, Any], base: Path) -> None:
     setup_page(document)
     setup_styles(document, font_name, TEAL)
     add_title_block(document, manifest)
+    add_update_log(document, manifest["updateLog"])
     add_revision_status(document, manifest["revision"])
     add_version_basis(document, manifest.get("versionBasis"))
     add_usage_reminders(document, manifest.get("usageReminders") or [])
     add_common_rules(document, manifest.get("commonRules") or [])
     add_chapter(document, manifest, base, font_name)
-    add_update_log(document, manifest["updateLog"])
 
 
 def main() -> int:
