@@ -1,0 +1,7 @@
+interface:
+  display_name: "Mantis Excel 更新"
+  short_description: "以 CSV 更新 Mantis 問題單 Excel"
+  default_prompt: "Use $mantis-excel-update to update my Mantis issue workbook from the latest CSV."
+
+policy:
+  allow_implicit_invocation: true
