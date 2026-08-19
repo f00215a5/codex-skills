@@ -2,6 +2,8 @@
 
 這個 repository 提供名為 Derick's Skills 的個人 Codex marketplace，可由本機 checkout 或 GitHub repository 加入 Codex，並安裝其中的 plugins。
 
+白話版與 ChatGPT App GUI 操作說明請見 [Word 使用指南](docs/Dericks-Skills-使用指南.docx)；本機路徑為 `D:\codex-skills\docs\Dericks-Skills-使用指南.docx`。
+
 ## 安裝與更新
 
 先將 marketplace 加入 Codex（已加入過可略過）：
