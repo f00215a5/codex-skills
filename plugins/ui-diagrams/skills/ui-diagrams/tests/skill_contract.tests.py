@@ -70,6 +70,32 @@ class UiDiagramsSkillContractTests(unittest.TestCase):
         self.assertIn(".drawio", guidance)
         self.assertIn("PNG", guidance)
 
+    def test_install_failure_is_terminal_and_keeps_the_manual_running(self) -> None:
+        guidance = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (SKILL_MD, POLICY_MD)
+        )
+        self.assertIn("clone、desktop 安裝或重新檢查失敗", guidance)
+        self.assertIn("分類為 `unavailable`", guidance)
+        self.assertIn("不得重新進入同意或安裝迴圈", guidance)
+        self.assertIn("僅在對話中", guidance)
+        self.assertIn("只停止圖表分支", guidance)
+        self.assertIn("繼續 UI 手冊流程", guidance)
+
+    def test_current_task_directly_loads_a_successful_install_before_handoff(self) -> None:
+        guidance = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (SKILL_MD, POLICY_MD)
+        )
+        self.assertIn("目前任務直接載入並閱讀", guidance)
+        self.assertIn(
+            ".codex/skills/drawio-skill/skills/drawio-skill/SKILL.md", guidance
+        )
+        self.assertIn("直接讀取後立即交棒給 $drawio-skill", guidance)
+        self.assertIn("新的 Codex 任務仍可能需要", guidance)
+        self.assertIn("正常自動發現", guidance)
+        self.assertIn("不自行建立、預覽、匯出或修改", guidance)
+
 
 if __name__ == "__main__":
     unittest.main()

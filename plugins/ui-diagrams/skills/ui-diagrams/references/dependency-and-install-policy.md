@@ -23,4 +23,10 @@ Linux Debian: download the selected official .deb from https://github.com/jgraph
 Linux RPM: download the selected official .rpm from the same release as ./drawio-release.rpm and run sudo dnf install -y ./drawio-release.rpm
 ```
 
-After an approved install, re-run `check_readiness.py`. A new Codex task provides normal skill discovery after installation; do not claim the newly cloned skill is automatically discovered in the already-running task.
+After an approved install, re-run `check_readiness.py`. If its status is `ready`, the 目前任務直接載入並閱讀 `.codex/skills/drawio-skill/skills/drawio-skill/SKILL.md` when the skill was newly cloned; when it already existed, directly read the ready report's `drawioSkill.path` instead. 直接讀取後立即交棒給 $drawio-skill. This direct load supplies the downstream instructions to the current task only; it does not create, preview, export, or modify any output.
+
+新的 Codex 任務仍可能需要才能以正常自動發現（normal automatic discovery）方式找到新安裝的 skill. Do not claim that automatic discovery has refreshed in the already-running task.
+
+## Terminal install failure
+
+If clone、desktop 安裝或重新檢查失敗, report the failed action and relevant status 僅在對話中, 分類為 `unavailable`, and 不得重新進入同意或安裝迴圈. 只停止圖表分支 and return control so the parent can 繼續 UI 手冊流程. Do not generate, preview, export, or modify any diagram artifact in this failure path.

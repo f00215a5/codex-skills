@@ -16,7 +16,9 @@ This skill is an orchestration boundary for a parent UI-manual workflow. It neve
 
 For `needs-install`, read [dependency-and-install-policy.md](references/dependency-and-install-policy.md). Present the missing components, exact platform command, upstream source URL, install scope, and this exact question: `是否同意為本次任務安裝？` Do not run an installer unless the user gives 明確同意 in this current task and the runtime grants the required approval.
 
-On an approved install, clone `https://github.com/Agents365-ai/drawio-skill.git` into the current user's `.codex/skills/drawio-skill` only when it is missing. Run only the policy-supported platform installer, then re-run readiness. Explain that a new Codex task provides normal discovery after installation.
+On an approved install, clone `https://github.com/Agents365-ai/drawio-skill.git` into the current user's `.codex/skills/drawio-skill` only when it is missing. Run only the policy-supported platform installer, then re-run readiness. If it is ready, use the policy's current-task direct-load procedure and immediately hand off; never generate output while loading the downstream skill.
+
+If clone, desktop installation, or the recheck fails, follow the policy's terminal failure path. Do not restart the consent or installation flow.
 
 If the user declines, or readiness is `unavailable`, report that status only in chat, explicitly return the caller to the continuing UI manual workflow, and 只停止圖表分支. Do not attempt another installer, diagram tool, artifact operation, or workaround.
 
