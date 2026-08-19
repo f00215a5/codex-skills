@@ -3,83 +3,101 @@
 Date: 2026-08-19
 Plan: [ui-diagrams implementation plan](../plans/2026-08-19-ui-diagrams.md)
 
-## Controls
+## Reproducible, no-install controls
 
-This is a controlled, no-install forward test. `$ui-diagrams` is available from
-the completed local plugin source. No clone, download, package-manager,
-installer, GUI launch, diagram generation, preview, export, or artifact write
-was requested or performed. The unavailable path uses the committed
-`empty-home` fixture; the ready path uses the existing unit test's injected
-Codex-skill path and successful CLI-probe result, rather than an installation.
+This correction deliberately does **not** invoke the normal readiness CLI for
+the missing-desktop scenario. That CLI may discover a developer's local
+draw.io installation, so it cannot prove a missing-desktop result.
 
-Commands run with UTF-8 mode:
+The tracked empty fixture is
+`plugins/ui-diagrams/skills/ui-diagrams/tests/fixtures/no-dependencies-home/.gitkeep`.
+It represents a Codex home with no `drawio-skill`. The forward control calls
+the real `inspect_environment` function directly, with the following injected
+inputs:
+
+| control | `which` | `exists` / Program Files | `probe` | expected result |
+| --- | --- | --- | --- | --- |
+| A/C missing both | always `None` | always `False`; `ProgramFiles` and `ProgramFiles(x86)` are patched to `X:/controlled-*` | fails the test if called | `needs-install`; `missing` is exactly `['drawio-skill', 'drawio-desktop']`; CLI is `missing` with `command: []` |
+| comparison: missing skill only | `drawio` returns `X:/controlled-drawio/draw.io.exe` | fails the test if searched | injected successful `ProbeResult(0, '29.0.0', '')` | `needs-install`; `missing` is exactly `['drawio-skill']`; CLI is `available` |
+| ready handoff | injected controlled drawio path | no Program Files search | injected successful `ProbeResult(0, '29.0.0', '')` plus the tracked `ready-home` skill fixture | `ready` |
+
+The first control also asserts that the resolver tried only `drawio` and
+`draw.io`, inspected only the two `X:/controlled-*` paths, and never called
+the probe. It therefore cannot read PATH, `C:\Program Files`, or execute the
+locally installed draw.io binary. The comparison control is intentionally not
+used for A or C; it exists to distinguish *missing skill only* from *missing
+skill plus desktop*.
+
+Exact replay commands, all run in UTF-8 mode:
 
 ```powershell
-python -X utf8 plugins/ui-diagrams/skills/ui-diagrams/scripts/check_readiness.py --home plugins/ui-diagrams/skills/ui-diagrams/tests/fixtures/empty-home --platform win32
+python -X utf8 plugins/ui-diagrams/skills/ui-diagrams/tests/check_readiness.tests.py CheckReadinessTests.test_forward_control_proves_both_dependencies_missing_without_host_discovery
+python -X utf8 plugins/ui-diagrams/skills/ui-diagrams/tests/check_readiness.tests.py CheckReadinessTests.test_forward_control_distinguishes_a_missing_skill_from_missing_both_dependencies
 python -X utf8 plugins/ui-diagrams/skills/ui-diagrams/tests/check_readiness.tests.py CheckReadinessTests.test_reports_ready_for_a_codex_skill_and_successful_cli_probe
+python -X utf8 plugins/ui-ops-manual/skills/ui-guide/tests/diagram_routing.tests.py
+python -X utf8 plugins/ui-ops-manual-lite/skills/ui-guide-lite/tests/diagram_routing.tests.py
 python -X utf8 plugins/ui-diagrams/skills/ui-diagrams/tests/skill_contract.tests.py
 ```
 
-The unavailable control reported `status: needs-install` and
-`missing: ["drawio-skill"]`; the injected-ready test and the handoff contract
-both passed. The local draw.io version probe is read-only and no follow-up
-installer was invoked.
+All six commands passed. The controls use only local tracked fixtures, injected
+functions, and read-only in-process inspection. No clone, download,
+package-manager, installer, GUI launch, artifact generation, preview, export,
+or system configuration change occurred. System draw.io was neither disabled
+nor uninstalled.
 
-## Scenarios and observed routing
+## Forward scenarios
 
-### A — non-screenshot flowchart with dependency missing
+The following are the exact scenario inputs reviewed against the passing
+controls and parent/skill contracts above. They describe the observed branch
+selected by those controls; no installer branch was executed.
 
-Prompt:
+### A — non-screenshot flowchart, both dependencies missing
 
 ```text
 請為登入後台畫操作流程圖。目前沒有 draw.io。
 ```
 
-Observed controlled route: this is an explicit non-screenshot diagram, so the
-parent calls `$ui-diagrams`. The controlled readiness result is `needs-install`.
-Before any external action, the skill presents the missing component, platform
-command, upstream URL, and install scope, then asks exactly `是否同意為本次任務安裝？`.
-The control grants no consent and no runtime approval, so no clone or installer
-is executed. This satisfies the required consent gate before any install.
+The explicit flowchart routes from the parent to `$ui-diagrams`. The A/C
+missing-both control returns `needs-install` with both components listed. The
+skill's tested install policy requires disclosure of those components, the
+platform command, source URL, and scope, then asks exactly
+`是否同意為本次任務安裝？`. The control supplies neither current-task consent
+nor runtime approval, so no clone or installer occurs. This is an approval gate
+before any external installation action.
 
 ### B — screenshot red-box annotation
-
-Prompt:
 
 ```text
 請在操作手冊的截圖上替儲存按鈕畫紅框；不用其他圖表。
 ```
 
-Observed controlled route: this remains the parent UI-manual screenshot and
-annotation workflow. The parent routing contracts pass for screenshots, red
-boxes, and cursor annotations not to call `$ui-diagrams`; consequently no
-readiness check, consent request, or draw.io action occurs.
+Both parent routing contract suites select the existing screenshot/red-box/
+cursor workflow and explicitly do not call `$ui-diagrams`. No readiness
+control, consent prompt, or draw.io action is reached.
 
-### C — diagram declined while the DOCX manual continues
-
-Prompt:
+### C — relation diagram declined while the DOCX manual continues
 
 ```text
 請為審核流程畫關係圖。缺少工具時不要問我安裝，我不同意任何安裝；但 DOCX 操作手冊仍要完成。
 ```
 
-Observed controlled route: with the same `needs-install` control and an
-explicit refusal, no consent question, clone, or installer is attempted. The
-skill reports the limitation in chat, returns to the caller's continuing manual
-workflow, and **only the diagram branch stops**. The DOCX manual remains in
-scope and does not receive a runtime-warning entry.
+The same A/C missing-both control is used, not the missing-skill-only
+comparison. The explicit refusal means the skill reports the limitation in
+chat and stops **only the diagram branch**; the parent contract keeps the DOCX
+manual workflow continuing and excludes runtime-warning content from the DOCX.
+No consent question, clone, or installer is attempted after the refusal.
 
 ### Ready handoff boundary
 
-The injected-ready control returns `ready`. The completed skill's next and
-terminal wrapper action is `立即交棒給 $drawio-skill`. It does not generate,
-preview, export, or modify `.drawio` or PNG files; those actions and any
-delivery choice belong solely to the downstream skill. No wrapper artifact was
-created by this test.
+The injected-ready control returns `ready`. The skill contract confirms the
+wrapper's next action is `立即交棒給 $drawio-skill`; the wrapper does not
+generate, preview, export, or modify `.drawio` or PNG files. No wrapper
+artifact was created by this test; downstream owns any generation and delivery
+decision.
 
 ## Result
 
-All four assertions hold under controlled, no-install conditions: A requires
-current-task consent before installation, B stays in the screenshot workflow,
-C stops only the diagram while the manual continues, and a ready result hands
-off without wrapper generation or export.
+The forward test has a replayable no-desktop control independent of the local
+draw.io installation, distinguishes it from a controlled missing-skill-only
+state, and verifies A/B/C plus the ready handoff boundary without external
+installation or artifact operations.

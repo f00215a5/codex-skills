@@ -23,7 +23,80 @@ def load_module() -> object | None:
 
 class CheckReadinessTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_path = Path(__file__).parent / "fixtures" / "empty-home"
+        self.temp_path = Path(__file__).parent / "fixtures" / "no-dependencies-home"
+
+    def test_forward_control_proves_both_dependencies_missing_without_host_discovery(self) -> None:
+        check_readiness = load_module()
+        self.assertIsNotNone(check_readiness)
+        if check_readiness is None:
+            return
+        self.assertTrue(self.temp_path.is_dir())
+        searched_commands: list[str] = []
+        searched_paths: list[Path] = []
+
+        def which(command: str) -> str | None:
+            searched_commands.append(command)
+            return None
+
+        def exists(path: Path) -> bool:
+            searched_paths.append(path)
+            return False
+
+        def probe(_: list[str]) -> object:
+            self.fail("a missing command must not be probed")
+
+        with patch.dict(
+            check_readiness.os.environ,
+            {
+                "ProgramFiles": "X:/controlled-program-files",
+                "ProgramFiles(x86)": "X:/controlled-program-files-x86",
+            },
+        ):
+            report = check_readiness.inspect_environment(
+                home=self.temp_path,
+                platform="win32",
+                which=which,
+                exists=exists,
+                probe=probe,
+            )
+
+        self.assertEqual(report["status"], "needs-install")
+        self.assertEqual(report["missing"], ["drawio-skill", "drawio-desktop"])
+        self.assertEqual(report["drawioCli"]["state"], "missing")
+        self.assertEqual(report["drawioCli"]["command"], [])
+        self.assertEqual(searched_commands, ["drawio", "draw.io"])
+        self.assertEqual(
+            searched_paths,
+            [
+                Path("X:/controlled-program-files/draw.io/draw.io.exe"),
+                Path("X:/controlled-program-files-x86/draw.io/draw.io.exe"),
+            ],
+        )
+
+    def test_forward_control_distinguishes_a_missing_skill_from_missing_both_dependencies(self) -> None:
+        check_readiness = load_module()
+        self.assertIsNotNone(check_readiness)
+        if check_readiness is None:
+            return
+        self.assertTrue(self.temp_path.is_dir())
+        probe_commands: list[list[str]] = []
+
+        def probe(command: list[str]) -> object:
+            probe_commands.append(command)
+            return check_readiness.ProbeResult(0, "29.0.0", "")
+
+        report = check_readiness.inspect_environment(
+            home=self.temp_path,
+            platform="win32",
+            which=lambda name: "X:/controlled-drawio/draw.io.exe" if name == "drawio" else None,
+            exists=lambda _: self.fail("a resolved PATH command must not search Program Files"),
+            probe=probe,
+        )
+
+        self.assertEqual(report["status"], "needs-install")
+        self.assertEqual(report["missing"], ["drawio-skill"])
+        self.assertEqual(report["drawioCli"]["state"], "available")
+        self.assertEqual(probe_commands, [["X:/controlled-drawio/draw.io.exe"]])
 
     def test_reports_needs_install_when_skill_and_cli_are_missing(self) -> None:
         check_readiness = load_module()
