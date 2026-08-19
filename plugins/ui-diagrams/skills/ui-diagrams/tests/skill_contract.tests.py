@@ -28,6 +28,24 @@ class UiDiagramsSkillContractTests(unittest.TestCase):
         self.assertRegex(skill, r"(?m)^name: ui-diagrams$")
         self.assertIn("$drawio-skill", skill)
 
+    def test_manifest_declares_existing_icon_assets(self) -> None:
+        manifest_path = PLUGIN_ROOT / ".codex-plugin/plugin.json"
+        self.assertTrue(manifest_path.is_file())
+        if not manifest_path.is_file():
+            return
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        interface = manifest["interface"]
+        expected_icon = "./skills/ui-diagrams/assets/ui-diagrams-icon.png"
+        for field in ("composerIcon", "logo", "logoDark"):
+            self.assertEqual(interface[field], expected_icon)
+            self.assertTrue(
+                (PLUGIN_ROOT / interface[field].removeprefix("./")).is_file(),
+                f"missing {field} asset",
+            )
+        self.assertTrue(
+            (PLUGIN_ROOT / "skills/ui-diagrams/assets/ui-diagrams-icon.svg").is_file()
+        )
+
     def test_marketplace_exposes_ui_diagrams_with_the_required_install_policy(self) -> None:
         self.assertTrue(MARKETPLACE_PATH.is_file())
         if not MARKETPLACE_PATH.is_file():
