@@ -4,13 +4,14 @@
 
 **Goal:** 建立獨立 `ui-diagrams` 外掛，讓兩個 UI 操作說明書技能在明確圖表需求下，安全地檢核、安裝並使用上游 drawio-skill。
 
-**Architecture:** 新外掛以 `$ui-diagrams` 提供條件式路由、使用者同意與交付規則；唯讀 Python helper 回傳可測試的 JSON readiness report，避免把環境猜測散落在提示詞。上游 `drawio-skill` 繼續負責 `.drawio` 生成與匯出；兩個既有 UI 技能只加入窄範圍的路由規則。
+**Architecture:** 新外掛以 `$ui-diagrams` 提供條件式路由、使用者同意與交棒規則；唯讀 Python helper 回傳可測試的 JSON readiness report，避免把環境猜測散落在提示詞。環境 ready 後，wrapper 立即交棒給上游 `$drawio-skill`；只有上游 skill 負責 `.drawio` 生成、preview、review、export 與檔案修改。兩個既有 UI 技能只加入窄範圍的路由規則。
 
 **Tech Stack:** Codex plugin manifest、Markdown Agent Skill、Python 3 standard library、`unittest`、Git、draw.io Desktop CLI、上游 Agents365-ai/drawio-skill。
 
 ## Global Constraints
 
 - `ui-diagrams` 是獨立 plugin 與唯一 `$ui-diagrams` skill，不能在兩個 UI plugin 內複製同名 skill。
+- `ui-diagrams` 不得建立、預覽、匯出或修改 `.drawio`／PNG；在 `ready` 後必須立即交棒給 `$drawio-skill`。
 - 僅在使用者明確要求流程圖、關係圖、架構圖、狀態圖或泳道圖等非截圖圖表時路由；截圖紅框不路由。
 - 不得未經本次任務的明確同意下載、clone、執行套件安裝或啟動 GUI。
 - 拒絕、安裝失敗或環境不可用時，只停止 draw.io 圖表分支；UI 手冊主流程必須繼續。
@@ -217,6 +218,8 @@ def test_skill_requires_consent_and_preserves_the_manual_when_diagrams_stop(self
     )
     self.assertIn("明確同意", guidance)
     self.assertIn("只停止圖表分支", guidance)
+    self.assertIn("立即交棒給 $drawio-skill", guidance)
+    self.assertIn("不自行建立、預覽、匯出或修改", guidance)
     self.assertIn(".drawio", guidance)
     self.assertIn("PNG", guidance)
 ```
@@ -242,7 +245,7 @@ Write concise skill instructions with the following observable recipe:
 3. For `needs-install`, present missing components, the exact platform command, the upstream source URL, install scope, and the question `是否同意為本次任務安裝？`; do not execute an installer until an affirmative answer.
 4. On approval, clone `https://github.com/Agents365-ai/drawio-skill.git` to the current user's `.codex/skills/drawio-skill` when missing; execute only the platform-specific draw.io installer supported by the policy; re-run readiness. Explain that a new Codex task provides normal discovery after installation.
 5. For `decline` or `unavailable`, report the status only in chat and explicitly return the caller to the continuing UI manual workflow.
-6. For `ready`, read and follow `$drawio-skill`; default delivery is `diagram.drawio` plus `diagram.drawio.png`, with an explicit user override allowed before generation.
+6. For `ready`, immediately hand off to `$drawio-skill` without generating, previewing, exporting, or modifying any diagram file. The downstream delivery default is `diagram.drawio` plus `diagram.drawio.png`, with an explicit user override allowed before generation.
 
 The policy reference must include the exact commands below and state that each external action still requires the runtime's permission mechanism:
 
@@ -395,7 +398,7 @@ Expected: every test and validator PASS; no whitespace errors.
 
 - [ ] **Step 5: Forward-test the completed skill and commit**
 
-Run the three Task 1 scenarios with `$ui-diagrams` available. Verify: A asks for consent before any install; B stays in screenshot workflow; C reports only diagram skip while continuing the manual. Record observed outcomes in `docs/superpowers/evidence/2026-08-19-ui-diagrams-forward-test.md`.
+Run the three Task 1 scenarios with `$ui-diagrams` available. Verify: A asks for consent before any install; B stays in screenshot workflow; C reports only diagram skip while continuing the manual; every ready scenario ends by handing work to `$drawio-skill` without the wrapper generating or exporting files. Record observed outcomes in `docs/superpowers/evidence/2026-08-19-ui-diagrams-forward-test.md`.
 
 ```powershell
 git add docs/superpowers/evidence/2026-08-19-ui-diagrams-forward-test.md plugins/ui-diagrams/.codex-plugin/plugin.json plugins/ui-ops-manual/.codex-plugin/plugin.json plugins/ui-ops-manual-lite/.codex-plugin/plugin.json

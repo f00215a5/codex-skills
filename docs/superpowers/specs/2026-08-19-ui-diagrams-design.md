@@ -7,11 +7,12 @@
 
 新增獨立 marketplace plugin `ui-diagrams`，提供核心 skill `$ui-diagrams`。它是 `$ui-guide` 與 `$ui-guide-lite` 的共用圖表前置層：只處理操作介面說明書中的流程圖、關係圖、架構圖、泳道圖及其他非截圖標註的圖表需求。
 
-圖表的實際建立沿用上游 [Agents365-ai/drawio-skill](https://github.com/Agents365-ai/drawio-skill)；本外掛不複製或分叉上游的產圖邏輯。
+`ui-diagrams` 僅負責需求路由、依賴檢核與經同意的安裝；環境就緒後立即交棒給上游 [Agents365-ai/drawio-skill](https://github.com/Agents365-ai/drawio-skill)。本外掛不複製、分叉或執行上游的產圖流程，也不自行建立、預覽、匯出或修改 `.drawio`／PNG。
 
 ## 範圍與邊界
 
 - `$ui-guide` 與 `$ui-guide-lite` 僅在使用者明確要求圖表時呼叫 `$ui-diagrams`。
+- `$ui-diagrams` 在 `ready` 後只把工作交給 `$drawio-skill`；實際圖表生成、preview、review、export 與檔案修改完全由 `$drawio-skill` 負責。
 - 截圖、紅框、游標、欄位說明與 DOCX 主流程維持由原本 UI 手冊技能處理，不會因圖表依賴缺少而停止。
 - 只在使用者同意後安裝外部 skill 或 draw.io Desktop；不得預先下載、安裝或修改系統套件。
 - 若圖表分支不能執行，明確回報原因並跳過圖表；不得假裝以截圖紅框或其他未同意格式取代 draw.io 圖表。
@@ -58,7 +59,7 @@ plugins/ui-diagrams/
 
 | 狀態 | 行為 |
 | --- | --- |
-| ready | 讀取並執行上游 `drawio-skill`。 |
+| ready | 回報依賴已就緒，立即交由上游 `$drawio-skill` 執行。 |
 | needs-install | 列出缺少項目、安裝來源與將執行的命令，詢問使用者是否同意安裝。 |
 | unavailable | 在對話回報環境限制，停止本次圖表分支；UI 手冊主流程繼續。 |
 | declined | 在對話回報使用者未同意安裝，停止本次圖表分支；UI 手冊主流程繼續。 |
@@ -72,14 +73,13 @@ plugins/ui-diagrams/
 - 安裝後必須再次進行 readiness 檢核，僅在 `ready` 時進入上游圖表工作流程。
 - 安裝需要系統權限、下載或 GUI 互動時，仍依當前執行環境的核可機制請求權限；使用者同意安裝不代表可略過系統核可。
 
-## 產製與交付
+## 產製與交付交棒
 
-當狀態為 `ready`，`$ui-diagrams` 使用上游 skill 的圖表類型、結構驗證、preview 與 export 規則。
+當狀態為 `ready`，`$ui-diagrams` 只明確交棒給 `$drawio-skill`。圖表類型選擇、結構驗證、preview、review、export 與產出檔修改均由上游 skill 執行。
 
 - 預設交付為同名的 `.drawio` 原檔與 PNG。
 - 開始產製時告知此預設；使用者可改成只要其中一項，或追加 SVG、PDF、JPG。
-- 交付前向使用者回報兩個檔案的路徑與圖表驗證／預覽結果。
-- 圖表檔案與 PNG 由 UI 手冊主技能依使用者同意的文件流程納入 DOCX；不把缺少依賴、安裝結果或沙箱限制寫進操作說明書內容。
+- `$drawio-skill` 完成後，UI 手冊主技能依使用者同意的文件流程納入其交付的圖表檔案與 PNG；不把缺少依賴、安裝結果或沙箱限制寫進操作說明書內容。
 
 ## 失敗處理
 
@@ -94,3 +94,4 @@ plugins/ui-diagrams/
 3. 測試覆蓋 ready、needs-install／同意、declined、unavailable 四種路徑。
 4. 測試確認拒絕／不可用只停止圖表分支，主文件流程不受阻斷。
 5. 測試確認預設交付為 `.drawio` 與 PNG，且可由使用者覆寫。
+6. 測試確認 `$ui-diagrams` 在 ready 後只交棒給 `$drawio-skill`，不包含任何圖表生成、preview、export 或檔案修改步驟。
