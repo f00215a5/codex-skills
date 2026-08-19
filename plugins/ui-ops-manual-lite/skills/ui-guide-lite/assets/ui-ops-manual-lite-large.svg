@@ -1,21 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">UI Operations Manual (Lite)</title>
-  <desc id="desc">A system interface with a navigation sidebar and highlighted form control.</desc>
-  <rect x="32" y="32" width="448" height="448" rx="96" fill="#1F7A6D"/>
-  <rect x="86" y="112" width="340" height="288" rx="28" fill="#F7FFFC"/>
-  <path d="M86 140c0-15.5 12.5-28 28-28h284c15.5 0 28 12.5 28 28v40H86z" fill="#CDEBE5"/>
-  <circle cx="124" cy="132" r="10" fill="#1F7A6D"/>
-  <circle cx="154" cy="132" r="10" fill="#1F7A6D" opacity=".65"/>
-  <circle cx="184" cy="132" r="10" fill="#1F7A6D" opacity=".35"/>
-  <rect x="112" y="180" width="70" height="188" rx="14" fill="#CDEBE5"/>
-  <circle cx="140" cy="212" r="10" fill="#1F7A6D"/>
-  <rect x="126" y="240" width="28" height="10" rx="5" fill="#1F7A6D" opacity=".7"/>
-  <circle cx="140" cy="284" r="10" fill="#1F7A6D" opacity=".55"/>
-  <rect x="126" y="312" width="28" height="10" rx="5" fill="#1F7A6D" opacity=".5"/>
-  <rect x="210" y="184" width="164" height="30" rx="10" fill="#E4F5F0"/>
-  <rect x="210" y="236" width="164" height="42" rx="11" fill="#FFFFFF" stroke="#D64545" stroke-width="12"/>
-  <rect x="230" y="252" width="88" height="10" rx="5" fill="#CDEBE5"/>
-  <rect x="210" y="304" width="124" height="24" rx="9" fill="#CDEBE5"/>
-  <circle cx="398" cy="222" r="20" fill="#D64545"/>
-  <path d="M389 222l7 7 14-17" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <title id="title">UI Operations Manual Lite</title>
+  <desc id="desc">A compact operation guide card with a checklist and a speed spark.</desc>
+  <defs>
+    <linearGradient id="background" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#155E75"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+    <filter id="shadow" x="72" y="92" width="368" height="340" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#083344" flood-opacity=".28"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="url(#background)"/>
+  <path d="M96 126c0-17.7 14.3-32 32-32h190l98 98v192c0 17.7-14.3 32-32 32H128c-17.7 0-32-14.3-32-32z" fill="#F8FAFC" filter="url(#shadow)"/>
+  <path d="M318 94v66c0 17.7 14.3 32 32 32h66z" fill="#CFFAFE"/>
+  <path d="M350 192h66l-98-98v66c0 17.7 14.3 32 32 32z" fill="#99F6E4" opacity=".9"/>
+  <rect x="132" y="165" width="132" height="18" rx="9" fill="#0F766E"/>
+  <rect x="132" y="199" width="204" height="12" rx="6" fill="#94A3B8" opacity=".8"/>
+  <circle cx="148" cy="254" r="18" fill="#14B8A6"/>
+  <path d="m139 254 7 7 13-15" fill="none" stroke="#F8FAFC" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="182" y="246" width="156" height="16" rx="8" fill="#CBD5E1"/>
+  <circle cx="148" cy="302" r="18" fill="#2DD4BF"/>
+  <path d="m139 302 7 7 13-15" fill="none" stroke="#F8FAFC" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="182" y="294" width="126" height="16" rx="8" fill="#CBD5E1"/>
+  <circle cx="148" cy="350" r="18" fill="#5EEAD4"/>
+  <path d="m139 350 7 7 13-15" fill="none" stroke="#F8FAFC" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="182" y="342" width="144" height="16" rx="8" fill="#CBD5E1"/>
+  <path d="M408 92l8 21 21 8-21 8-8 21-8-21-21-8 21-8z" fill="#A7F3D0"/>
+  <circle cx="402" cy="156" r="8" fill="#99F6E4"/>
 </svg>
