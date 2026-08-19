@@ -2,12 +2,20 @@
 
 這個 repository 提供名為 Derick's Skills 的個人 Codex marketplace，可由本機 checkout 或 GitHub repository 加入 Codex，並安裝其中的 plugins。
 
+白話版與 ChatGPT App GUI 操作說明請見 [Word 使用指南](docs/Dericks-Skills-使用指南.docx)；下載或 clone 後，可由 `<repository-root>/docs/Dericks-Skills-使用指南.docx` 開啟。
+
 ## 安裝與更新
 
-先將 marketplace 加入 Codex（已加入過可略過）：
+先將 marketplace 加入 Codex（已加入過可略過）。若使用本機來源，請將下列 `<repository-root>` 替換成你下載或 clone 的 repository 根目錄，該目錄必須包含 `marketplace.json`：
 
 ```powershell
-codex plugin marketplace add D:\codex-skills
+codex plugin marketplace add "<repository-root>"
+```
+
+也可直接使用 GitHub repository：
+
+```powershell
+codex plugin marketplace add https://github.com/f00215a5/codex-skills.git
 ```
 
 安裝一個或多個 plugin：
@@ -85,7 +93,7 @@ Use $word-render to check which renderer will be used for this DOCX.
 ```text
 Use $ui-guide to create a UI 操作說明書。
 目標畫面：/orders/create、/orders/list
-交付：訂單管理操作說明書 v1.0，輸出到 D:\deliverables
+交付：訂單管理操作說明書 v1.0，輸出到 <輸出資料夾>
 我會提供前端 repository；後端 repository 不提供。
 ```
 
@@ -113,7 +121,7 @@ python "<ui-guide-lite skill path>\scripts\bootstrap.py"
 ```text
 Use $ui-guide-lite to create a UI 操作說明書。
 目標畫面：/customer/search
-交付：客戶查詢操作說明書 v1.0，輸出到 D:\deliverables
+交付：客戶查詢操作說明書 v1.0，輸出到 <輸出資料夾>
 請使用預設的側邊欄入口、紅框標註、欄位定義與成功影響說明。
 ```
 
@@ -158,9 +166,9 @@ Use $ui-diagrams to prepare a relationship diagram for this UI manual.
 
 ```text
 Use $mantis-excel-update to update my existing Mantis issue workbook from the latest CSV.
-CSV：D:\input\mantis-latest.csv
-既有工作簿：D:\work\問題單.xlsx
-輸出：D:\deliverables\問題單-2026-08.xlsx
+CSV：<CSV 檔案路徑>
+既有工作簿：<既有 Excel 檔案路徑>
+輸出：<輸出 Excel 檔案路徑>
 ```
 
 第一次回覆會先要求範本、欄位對應、替位符號規則與狀態分類確認；未確認前不會寫入 Excel。可回覆「接受預設」或逐項調整。
