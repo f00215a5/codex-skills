@@ -19,6 +19,8 @@ SKILL_RELATIVE_PATHS = (
 )
 MAX_CAPTURE_BYTES = 16_384
 READ_CHUNK_BYTES = 4_096
+TERMINATION_WAIT_SECONDS = 1
+DRAIN_JOIN_SECONDS = 1
 
 
 class ProbeResult(NamedTuple):
@@ -109,6 +111,20 @@ def _close_stream(stream: BinaryIO) -> None:
         pass
 
 
+def _stop_process(process: subprocess.Popen[bytes]) -> None:
+    """Attempt bounded termination without waiting indefinitely for a child."""
+    for signal in (process.terminate, process.kill):
+        try:
+            signal()
+        except OSError:
+            continue
+        try:
+            process.wait(timeout=TERMINATION_WAIT_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
 def probe_command(command: list[str]) -> ProbeResult:
     """Run exactly one bounded version probe for a resolved command."""
     try:
@@ -142,21 +158,17 @@ def probe_command(command: list[str]) -> ProbeResult:
         returncode = process.wait(timeout=15)
     except subprocess.TimeoutExpired:
         timed_out = True
-        try:
-            process.kill()
-        except OSError:
-            pass
-        process.wait()
+        _stop_process(process)
         returncode = None
     finally:
         for reader, capture in zip(readers, (stdout_capture, stderr_capture)):
-            reader.join(timeout=1)
+            reader.join(timeout=DRAIN_JOIN_SECONDS)
             if reader.is_alive():
                 capture.truncated = True
         for stream in (process.stdout, process.stderr):
             _close_stream(stream)
         for reader in readers:
-            reader.join(timeout=1)
+            reader.join(timeout=DRAIN_JOIN_SECONDS)
 
     return ProbeResult(
         returncode,

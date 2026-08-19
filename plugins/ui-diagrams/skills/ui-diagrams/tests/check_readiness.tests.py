@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -89,12 +90,17 @@ class CheckReadinessTests(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                "import sys; sys.stdout.write('o' * 49152); sys.stderr.write('e' * 49152)",
+                "import sys; "
+                "payload_out = 'o' * 65536; payload_err = 'e' * 65536; "
+                "[(sys.stdout.write(payload_out), sys.stdout.flush(), "
+                "sys.stderr.write(payload_err), sys.stderr.flush()) for _ in range(16)]",
             ]
         )
         self.assertEqual(result.returncode, 0)
         self.assertLessEqual(len(result.stdout.encode("utf-8")), 16384)
         self.assertLessEqual(len(result.stderr.encode("utf-8")), 16384)
+        self.assertTrue(result.stdout_truncated)
+        self.assertTrue(result.stderr_truncated)
         report = check_readiness.inspect_environment(
             home=Path(__file__).parent / "fixtures" / "ready-home",
             platform="linux",
@@ -103,6 +109,51 @@ class CheckReadinessTests(unittest.TestCase):
             probe=lambda _: result,
         )
         self.assertIn("truncated", report["drawioCli"]["detail"])
+
+    def test_timeout_cleanup_uses_only_bounded_waits_when_signals_fail(self) -> None:
+        check_readiness = load_module()
+        self.assertIsNotNone(check_readiness)
+        if check_readiness is None:
+            return
+
+        class TimeoutProcess:
+            def __init__(self, signal_fails: bool) -> None:
+                self.stdout = io.BytesIO()
+                self.stderr = io.BytesIO()
+                self.signal_fails = signal_fails
+                self.wait_timeouts: list[float | int | None] = []
+                self.terminate_calls = 0
+                self.kill_calls = 0
+
+            def wait(self, timeout: float | int | None = None) -> int:
+                self.wait_timeouts.append(timeout)
+                if timeout is None:
+                    raise AssertionError("timeout cleanup must not call wait() without a deadline")
+                raise check_readiness.subprocess.TimeoutExpired("drawio", timeout)
+
+            def terminate(self) -> None:
+                self.terminate_calls += 1
+                if self.signal_fails:
+                    raise OSError("terminate failed")
+
+            def kill(self) -> None:
+                self.kill_calls += 1
+                if self.signal_fails:
+                    raise OSError("kill failed")
+
+        for name, process in (
+            ("signals succeed but process remains alive", TimeoutProcess(False)),
+            ("terminate and kill both fail", TimeoutProcess(True)),
+        ):
+            with self.subTest(name=name):
+                with patch.object(check_readiness.subprocess, "Popen", return_value=process):
+                    result = check_readiness.probe_command(["drawio"])
+                self.assertIsNone(result.returncode)
+                self.assertTrue(result.timed_out)
+                self.assertTrue(all(timeout is not None for timeout in process.wait_timeouts))
+                self.assertEqual(process.wait_timeouts[0], 15)
+                self.assertGreaterEqual(process.terminate_calls, 1)
+                self.assertGreaterEqual(process.kill_calls, 1)
 
     def test_classifies_a_timeout_or_no_result_as_unavailable_when_command_exists(self) -> None:
         check_readiness = load_module()
