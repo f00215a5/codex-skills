@@ -1,0 +1,32 @@
+{
+  "name": "mantis-excel-update",
+  "version": "0.1.0",
+  "description": "Update Mantis issue-tracking Excel workbooks from CSV, including summary rules and optional release staging.",
+  "author": {
+    "name": "f00215a5",
+    "email": "f00215a5@gmail.com"
+  },
+  "keywords": [
+    "mantis",
+    "csv",
+    "excel",
+    "issue-tracking",
+    "release"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mantis Excel 更新",
+    "shortDescription": "以 Mantis CSV 更新問題單 Excel。",
+    "longDescription": "將 Mantis CSV 更新至既有 Excel，保留歷史、統計與備註規則，並可依 GitHub Release／PR 補待過版版號。",
+    "developerName": "f00215a5",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use $mantis-excel-update to update my Mantis issue workbook from the latest CSV.",
+      "Use $mantis-excel-update to update the pending-release sheet from GitHub Release and PR evidence."
+    ]
+  }
+}
