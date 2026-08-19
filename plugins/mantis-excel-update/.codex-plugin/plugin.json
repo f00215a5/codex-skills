@@ -27,6 +27,9 @@
     "defaultPrompt": [
       "Use $mantis-excel-update to update my Mantis issue workbook from the latest CSV.",
       "Use $mantis-excel-update to update the pending-release sheet from GitHub Release and PR evidence."
-    ]
+    ],
+    "composerIcon": "./skills/mantis-excel-update/assets/mantis-excel-update-icon.png",
+    "logo": "./skills/mantis-excel-update/assets/mantis-excel-update-icon.png",
+    "logoDark": "./skills/mantis-excel-update/assets/mantis-excel-update-icon.png"
   }
 }
