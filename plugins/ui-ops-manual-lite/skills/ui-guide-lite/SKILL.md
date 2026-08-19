@@ -107,6 +107,14 @@ python3 "<skill-path>/scripts/bootstrap.py"
 - 在**組 DOCX 前**，將 raw + annotated 以 **100%** 並排檢視，逐筆通過 [references/annotation-qa.md](references/annotation-qa.md) 的四項清單後才把 `status` 設為 `verified`。
 - 紅框、編號、圖說三者一致是獨立的交付條件；沒有渲染器可以事後修正 raw 圖上錯誤的座標。
 
+## 操作圖表（條件式）
+
+只有使用者**明確要求**流程圖、關係圖、架構圖、狀態圖或泳道圖等非截圖圖表時，才呼叫共用技能 `$ui-diagrams`；由該技能處理圖表的就緒檢查與後續交接。本技能不自行重複 draw.io 的圖表生成。
+
+截圖、紅框、游標等畫面證據與互動標註，仍依本 UI 操作說明書流程處理，**不呼叫 $ui-diagrams**。
+
+若 `$ui-diagrams` 回報婉拒或無法使用，只停止圖表分支，繼續沒有該圖表的手冊工作流程；僅在對話中向使用者回報此限制，**不得寫入 DOCX**。
+
 ## 文件結構與版面（build_docx.py）
 
 開始排版前閱讀 [references/document-structure-qa.md](references/document-structure-qa.md)（版面基線與驗收標準）。把擷取結果整理成 build manifest（JSON），結構與全部欄位見 `scripts/build_docx.py` 的 docstring。文件順序固定為：
