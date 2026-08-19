@@ -1,6 +1,6 @@
 # Derick's Skills
 
-這個 repository 是 Codex 的本機 marketplace，提供文件渲染、UI 操作說明書、UI 圖表交接，以及 Mantis CSV→Excel 更新工具。每個 plugin 都可獨立安裝；實際呼叫時使用下表的 `$skill` 名稱，而不是 plugin 資料夾名稱。
+這個 repository 提供名為 Derick's Skills 的個人 Codex marketplace，可由本機 checkout 或 GitHub repository 加入 Codex，並安裝其中的 plugins。
 
 ## 安裝與更新
 
