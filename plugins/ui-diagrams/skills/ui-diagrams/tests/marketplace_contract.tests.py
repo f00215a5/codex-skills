@@ -24,7 +24,7 @@ class MarketplaceContractTests(unittest.TestCase):
         marketplace = json.loads((REPO_ROOT / ".agents/plugins/marketplace.json").read_text(encoding="utf-8"))
         names = {plugin["name"] for plugin in marketplace["plugins"]}
         self.assertTrue({"ui-diagrams", "ui-ops-manual", "ui-ops-manual-lite"} <= names)
-        self.assertTrue(load_version("ui-diagrams").startswith("0.1.0+codex."))
+        self.assertRegex(load_version("ui-diagrams"), r"^0\.1\.0\+codex\.\d{14}$")
         self.assertTrue(load_version("ui-ops-manual").startswith("0.3.0+codex."))
         self.assertTrue(load_version("ui-ops-manual-lite").startswith("0.3.0+codex."))
 

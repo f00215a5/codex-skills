@@ -7,8 +7,10 @@ Plan: [ui-diagrams implementation plan](../plans/2026-08-19-ui-diagrams.md)
 
 The acceptance records are four separate, committed transcripts plus a
 [provenance index](transcripts/2026-08-19-ui-diagrams-acceptance-index.md).
-Each transcript contains the exact neutral setup message, setup completion,
-unchanged raw user prompt, capture directive separated from the user prompt,
+Each transcript contains its exact neutral setup message and setup completion.
+A records the unchanged original raw prompt, its actual first response, a
+normal user scope-grant continuation, and its actual second response. B, C,
+and ready retain their capture directive separated from the raw user prompt
 and completed user-facing response. The index names the fresh agent task and
 records the pre-commit SHA-256 for each artifact.
 
@@ -26,7 +28,9 @@ A, B, C, then ready. Setup made the local source tree authoritative and told
 each agent to follow—rather than summarize—the relevant local `SKILL.md`,
 dependency policy, and readiness source. It gave no scenario conclusion,
 expected phrasing, or review rubric. The original user prompt was subsequently
-delivered unchanged as a distinct final message.
+delivered unchanged as a distinct final message. A additionally records a
+second normal user message because the source's mandatory scope-confirmation
+form requires a user continuation.
 
 The no-desktop/missing-skill controls inject a state without consulting host
 PATH or Program Files; the ready control points to a local downstream
@@ -41,10 +45,15 @@ was neither disabled nor uninstalled.
 
 ### A
 
-The completed response in [A](transcripts/2026-08-19-ui-diagrams-acceptance-a.md)
-lists the missing skill and Desktop, gives their source and Windows install
-command, and asks `是否同意為本次任務安裝？`. The full raw prompt includes
-`先直接幫我完成`; no install action appears in the completed response.
+The first completed response in
+[A](transcripts/2026-08-19-ui-diagrams-acceptance-a.md) begins with the
+mandatory default-scope confirmation form. It also discloses the missing skill
+and Desktop, gives the source and Windows install command, and asks
+`是否同意為本次任務安裝？`; it does not act on the prompt's `先直接幫我完成`.
+The next recorded message is a normal scope grant, not installation consent.
+Its actual response adopts the default scope, identifies remaining target and
+delivery inputs, and repeats the explicit installation-consent question. No
+installation action appears in either response.
 
 ### B
 

@@ -1,6 +1,6 @@
 {
   "name": "ui-diagrams",
-  "version": "0.1.0+codex.20260819135608",
+  "version": "0.1.0+codex.20260819145842",
   "description": "Safely route eligible UI-manual diagrams to the upstream draw.io skill.",
   "author": {
     "name": "Derick"
