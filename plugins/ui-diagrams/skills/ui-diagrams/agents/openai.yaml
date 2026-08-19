@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Diagrams"
+  short_description: "Safely route UI-manual diagrams to draw.io"
+  default_prompt: "Use $ui-diagrams to prepare a non-screenshot UI diagram for this manual."
