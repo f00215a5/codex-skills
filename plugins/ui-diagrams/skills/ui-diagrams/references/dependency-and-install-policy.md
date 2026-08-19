@@ -27,6 +27,6 @@ After an approved install, re-run `check_readiness.py`. If its status is `ready`
 
 新的 Codex 任務仍可能需要才能以正常自動發現（normal automatic discovery）方式找到新安裝的 skill. Do not claim that automatic discovery has refreshed in the already-running task.
 
-## Terminal install failure
+## Terminal install or handoff failure
 
-If clone、desktop 安裝或重新檢查失敗, report the failed action and relevant status 僅在對話中, 分類為 `unavailable`, and 不得重新進入同意或安裝迴圈. 只停止圖表分支 and return control so the parent can 繼續 UI 手冊流程. Do not generate, preview, export, or modify any diagram artifact in this failure path.
+If clone、desktop 安裝或重新檢查失敗, or if downstream SKILL.md 讀取、解析、載入或交棒失敗 after readiness (including content that is unreadable or malformed), report the failed action and relevant status 僅在對話中, 分類為 `unavailable` 的終止狀態, and 不得重新進入同意或安裝迴圈. 只停止圖表分支 and return control so the parent can 繼續 UI 手冊流程. 不得進行任何圖表產出, preview, export, or modify any diagram artifact in this failure path.

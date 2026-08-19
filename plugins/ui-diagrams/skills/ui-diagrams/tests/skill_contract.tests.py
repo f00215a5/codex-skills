@@ -96,6 +96,19 @@ class UiDiagramsSkillContractTests(unittest.TestCase):
         self.assertIn("正常自動發現", guidance)
         self.assertIn("不自行建立、預覽、匯出或修改", guidance)
 
+    def test_downstream_load_or_handoff_failure_is_terminal(self) -> None:
+        guidance = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (SKILL_MD, POLICY_MD)
+        )
+        self.assertIn("downstream SKILL.md 讀取、解析、載入或交棒失敗", guidance)
+        self.assertIn("終止狀態", guidance)
+        self.assertIn("不得重新進入同意或安裝迴圈", guidance)
+        self.assertIn("僅在對話中", guidance)
+        self.assertIn("只停止圖表分支", guidance)
+        self.assertIn("繼續 UI 手冊流程", guidance)
+        self.assertIn("不得進行任何圖表產出", guidance)
+
 
 if __name__ == "__main__":
     unittest.main()
