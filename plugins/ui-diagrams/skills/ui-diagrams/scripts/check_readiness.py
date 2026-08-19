@@ -20,7 +20,7 @@ SKILL_RELATIVE_PATHS = (
 MAX_CAPTURE_BYTES = 16_384
 READ_CHUNK_BYTES = 4_096
 TERMINATION_WAIT_SECONDS = 1
-DRAIN_JOIN_SECONDS = 1
+DRAIN_JOIN_SECONDS = 0.1
 
 
 class ProbeResult(NamedTuple):
@@ -102,13 +102,11 @@ def _drain_stream(stream: BinaryIO, capture: _LimitedCapture) -> None:
             capture.append(chunk)
     except (OSError, ValueError):
         capture.truncated = True
-
-
-def _close_stream(stream: BinaryIO) -> None:
-    try:
-        stream.close()
-    except OSError:
-        pass
+    finally:
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
 
 
 def _stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -165,10 +163,10 @@ def probe_command(command: list[str]) -> ProbeResult:
             reader.join(timeout=DRAIN_JOIN_SECONDS)
             if reader.is_alive():
                 capture.truncated = True
-        for stream in (process.stdout, process.stderr):
-            _close_stream(stream)
-        for reader in readers:
-            reader.join(timeout=DRAIN_JOIN_SECONDS)
+        # Do not synchronously close a stream: BufferedReader.close() can wait on
+        # a lock held by its drain thread. A still-alive daemon owns only its
+        # stream and fixed-size capture, and exits on EOF (then self-closes) when
+        # every descendant closes the inherited pipe handle.
 
     return ProbeResult(
         returncode,

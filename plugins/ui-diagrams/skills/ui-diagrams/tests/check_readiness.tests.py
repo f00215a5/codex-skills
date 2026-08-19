@@ -1,6 +1,8 @@
 import importlib.util
 import io
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -154,6 +156,55 @@ class CheckReadinessTests(unittest.TestCase):
                 self.assertEqual(process.wait_timeouts[0], 15)
                 self.assertGreaterEqual(process.terminate_calls, 1)
                 self.assertGreaterEqual(process.kill_calls, 1)
+
+    def test_returns_without_closing_a_stream_blocked_in_read(self) -> None:
+        check_readiness = load_module()
+        self.assertIsNotNone(check_readiness)
+        if check_readiness is None:
+            return
+
+        class BlockingCloseStream:
+            def __init__(self) -> None:
+                self.read_started = threading.Event()
+                self.release_read = threading.Event()
+                self.close_calls = 0
+
+            def read(self, _: int) -> bytes:
+                self.read_started.set()
+                self.release_read.wait()
+                return b""
+
+            def close(self) -> None:
+                self.close_calls += 1
+                if not self.release_read.is_set():
+                    raise AssertionError("close would block behind the active read")
+
+        class CompletedProcess:
+            def __init__(self, stdout: BlockingCloseStream, stderr: BlockingCloseStream) -> None:
+                self.stdout = stdout
+                self.stderr = stderr
+
+            def wait(self, timeout: float | int | None = None) -> int:
+                self.wait_timeout = timeout
+                return 0
+
+        stdout = BlockingCloseStream()
+        stderr = BlockingCloseStream()
+        process = CompletedProcess(stdout, stderr)
+        try:
+            with patch.object(check_readiness.subprocess, "Popen", return_value=process):
+                started = time.monotonic()
+                result = check_readiness.probe_command(["drawio"])
+                elapsed = time.monotonic() - started
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(stdout.read_started.is_set())
+            self.assertTrue(stderr.read_started.is_set())
+            self.assertEqual(stdout.close_calls, 0)
+            self.assertEqual(stderr.close_calls, 0)
+            self.assertLess(elapsed, 0.75)
+        finally:
+            stdout.release_read.set()
+            stderr.release_read.set()
 
     def test_classifies_a_timeout_or_no_result_as_unavailable_when_command_exists(self) -> None:
         check_readiness = load_module()
