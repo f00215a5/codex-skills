@@ -1,0 +1,26 @@
+{
+  "name": "ui-diagrams",
+  "version": "0.1.0+codex.20260819154840",
+  "description": "Safely route eligible UI-manual diagrams to the upstream draw.io skill.",
+  "author": {
+    "name": "Derick"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "UI Diagrams",
+    "shortDescription": "Safely route UI-manual diagrams to draw.io.",
+    "longDescription": "Checks draw.io readiness and obtains task-specific install consent before handing eligible diagrams to draw.io.",
+    "developerName": "Derick",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive"
+    ],
+    "defaultPrompt": [
+      "Use $ui-diagrams to prepare a non-screenshot UI diagram for this manual.",
+      "Use $ui-diagrams to check whether draw.io is ready for this UI-manual diagram."
+    ],
+    "composerIcon": "./skills/ui-diagrams/assets/ui-diagrams-icon.png",
+    "logo": "./skills/ui-diagrams/assets/ui-diagrams-icon.png",
+    "logoDark": "./skills/ui-diagrams/assets/ui-diagrams-icon.png"
+  }
+}

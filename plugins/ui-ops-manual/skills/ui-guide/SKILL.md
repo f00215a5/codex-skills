@@ -107,6 +107,14 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 對任何紅框或游標標註，先閱讀 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md)。以 manifest 管理每個控制項和 caption；在 DOCX 建置前完成標註語意檢核。不要把 Word 的最終渲染當成紅框位置正確的證明。
 
+## 操作圖表（條件式）
+
+只有使用者**明確要求**流程圖、關係圖、架構圖、狀態圖或泳道圖等非截圖圖表時，才呼叫共用技能 `$ui-diagrams`；由該技能處理圖表的就緒檢查與後續交接。本技能不自行重複 draw.io 的圖表生成。
+
+截圖、紅框、游標等畫面證據與互動標註，仍依本 UI 操作說明書流程處理，**不呼叫 $ui-diagrams**。
+
+若 `$ui-diagrams` 回報婉拒或無法使用，只停止圖表分支，繼續沒有該圖表的手冊工作流程；僅在對話中向使用者回報此限制，**不得寫入 DOCX**。
+
 ## 文件結構與版面
 
 製作 DOCX 時使用 `documents` 技能，並在開始排版前閱讀 [references/default-document-layout.md](references/default-document-layout.md)。它是通用的 v1.3 視覺與結構基線，不攜帶任何特定系統名稱、畫面或資料。

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">UI Diagrams icon preview</title>
+  <desc id="desc">A user interface panel routes connected flow nodes to a handoff diamond.</desc>
+  <defs>
+    <linearGradient id="bg" x1="110" y1="80" x2="915" y2="945" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#253A78"/>
+      <stop offset="1" stop-color="#101827"/>
+    </linearGradient>
+    <linearGradient id="handoff" x1="712" y1="471" x2="888" y2="565" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2DD4BF"/>
+      <stop offset="1" stop-color="#A3E635"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity=".42"/>
+    </filter>
+  </defs>
+
+  <rect x="44" y="44" width="936" height="936" rx="200" fill="url(#bg)"/>
+  <path d="M140 210H884M140 814H884" stroke="#A5B4FC" stroke-opacity=".12" stroke-width="2"/>
+  <path d="M220 130V894M804 130V894" stroke="#A5B4FC" stroke-opacity=".08" stroke-width="2"/>
+
+  <g filter="url(#shadow)">
+    <rect x="152" y="326" width="300" height="286" rx="40" fill="#F8FAFC"/>
+    <rect x="152" y="326" width="300" height="68" rx="40" fill="#DCE7FF"/>
+    <path d="M152 370H452" stroke="#B9C9EF" stroke-width="2"/>
+    <circle cx="202" cy="360" r="10" fill="#6272B9"/>
+    <circle cx="234" cy="360" r="10" fill="#8B9BE1"/>
+    <circle cx="266" cy="360" r="10" fill="#B9C9EF"/>
+    <rect x="196" y="438" width="112" height="24" rx="12" fill="#263A78"/>
+    <rect x="196" y="486" width="206" height="18" rx="9" fill="#B7C7EC"/>
+    <rect x="196" y="526" width="164" height="18" rx="9" fill="#D5E0F7"/>
+    <rect x="196" y="566" width="126" height="18" rx="9" fill="#D5E0F7"/>
+  </g>
+
+  <path d="M452 469H525" stroke="#A5B4FC" stroke-width="18" stroke-linecap="round"/>
+  <path d="M626 469H698" stroke="#69E7D6" stroke-width="18" stroke-linecap="round"/>
+  <path d="M799 469H842" stroke="url(#handoff)" stroke-width="18" stroke-linecap="round"/>
+  <path d="M827 431L875 469L827 507" fill="none" stroke="#A3E635" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g filter="url(#shadow)">
+    <circle cx="576" cy="469" r="60" fill="#6D7FE7"/>
+    <path d="M550 469H602M576 443V495" stroke="#FFF" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="748" cy="469" r="60" fill="#25BFAF"/>
+    <path d="M720 469H776M748 441V497" stroke="#FFF" stroke-width="14" stroke-linecap="round"/>
+    <rect x="860" y="421" width="96" height="96" rx="22" transform="rotate(45 908 469)" fill="#D9F99D"/>
+    <path d="M885 469H929" stroke="#1E3A4D" stroke-width="14" stroke-linecap="round"/>
+  </g>
+
+  <circle cx="576" cy="656" r="12" fill="#6D7FE7" opacity=".65"/>
+  <path d="M576 541V632" stroke="#6D7FE7" stroke-width="10" stroke-linecap="round" stroke-dasharray="4 22" opacity=".7"/>
+  <circle cx="748" cy="656" r="12" fill="#25BFAF" opacity=".65"/>
+  <path d="M748 541V632" stroke="#25BFAF" stroke-width="10" stroke-linecap="round" stroke-dasharray="4 22" opacity=".7"/>
+</svg>
