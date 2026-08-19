@@ -11,6 +11,7 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = SKILL_ROOT.parents[1]
 SKILL_MD = SKILL_ROOT / "SKILL.md"
 POLICY_MD = SKILL_ROOT / "references/dependency-and-install-policy.md"
+MARKETPLACE_PATH = PLUGIN_ROOT.parents[1] / ".agents/plugins/marketplace.json"
 
 
 class UiDiagramsSkillContractTests(unittest.TestCase):
@@ -26,6 +27,32 @@ class UiDiagramsSkillContractTests(unittest.TestCase):
         self.assertEqual(manifest["name"], "ui-diagrams")
         self.assertRegex(skill, r"(?m)^name: ui-diagrams$")
         self.assertIn("$drawio-skill", skill)
+
+    def test_marketplace_exposes_ui_diagrams_with_the_required_install_policy(self) -> None:
+        self.assertTrue(MARKETPLACE_PATH.is_file())
+        if not MARKETPLACE_PATH.is_file():
+            return
+        marketplace = json.loads(MARKETPLACE_PATH.read_text(encoding="utf-8"))
+        entry = next(
+            (
+                plugin
+                for plugin in marketplace["plugins"]
+                if plugin["name"] == "ui-diagrams"
+            ),
+            None,
+        )
+        self.assertEqual(
+            entry,
+            {
+                "name": "ui-diagrams",
+                "source": {"source": "local", "path": "./plugins/ui-diagrams"},
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                },
+                "category": "Productivity",
+            },
+        )
 
     def test_skill_requires_consent_and_preserves_the_manual_when_diagrams_stop(self) -> None:
         self.assertTrue(SKILL_MD.is_file())
