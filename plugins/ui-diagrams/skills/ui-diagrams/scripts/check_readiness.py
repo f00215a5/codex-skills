@@ -8,20 +8,42 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import BinaryIO, Callable, NamedTuple
 
 
 SKILL_RELATIVE_PATHS = (
     Path(".codex/skills/drawio-skill/skills/drawio-skill/SKILL.md"),
     Path(".agents/skills/drawio-skill/skills/drawio-skill/SKILL.md"),
 )
+MAX_CAPTURE_BYTES = 16_384
+READ_CHUNK_BYTES = 4_096
 
 
 class ProbeResult(NamedTuple):
     returncode: int | None
     stdout: str
     stderr: str
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    timed_out: bool = False
+
+
+class _LimitedCapture:
+    def __init__(self) -> None:
+        self.data = bytearray()
+        self.truncated = False
+
+    def append(self, chunk: bytes) -> None:
+        remaining = MAX_CAPTURE_BYTES - len(self.data)
+        if remaining > 0:
+            self.data.extend(chunk[:remaining])
+        if len(chunk) > remaining:
+            self.truncated = True
+
+    def text(self) -> str:
+        return self.data.decode("utf-8", errors="replace")
 
 
 def find_drawio_skill(home: Path) -> Path | None:
@@ -71,22 +93,79 @@ def classify_readiness(skill_path: Path | None, probe: ProbeResult | None) -> st
     return "ready"
 
 
+def _drain_stream(stream: BinaryIO, capture: _LimitedCapture) -> None:
+    """Drain a subprocess stream while retaining no more than the fixed cap."""
+    try:
+        while chunk := stream.read(READ_CHUNK_BYTES):
+            capture.append(chunk)
+    except (OSError, ValueError):
+        capture.truncated = True
+
+
+def _close_stream(stream: BinaryIO) -> None:
+    try:
+        stream.close()
+    except OSError:
+        pass
+
+
 def probe_command(command: list[str]) -> ProbeResult:
     """Run exactly one bounded version probe for a resolved command."""
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [*command, "--version"],
-            capture_output=True,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-            timeout=15,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
         )
-    except subprocess.TimeoutExpired:
-        return ProbeResult(None, "", "draw.io --version timed out after 15 seconds")
     except OSError as error:
         return ProbeResult(None, "", str(error))
-    return ProbeResult(completed.returncode, completed.stdout, completed.stderr)
+
+    assert process.stdout is not None
+    assert process.stderr is not None
+    stdout_capture = _LimitedCapture()
+    stderr_capture = _LimitedCapture()
+    readers = (
+        threading.Thread(
+            target=_drain_stream, args=(process.stdout, stdout_capture), daemon=True
+        ),
+        threading.Thread(
+            target=_drain_stream, args=(process.stderr, stderr_capture), daemon=True
+        ),
+    )
+    for reader in readers:
+        reader.start()
+
+    timed_out = False
+    try:
+        returncode = process.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            process.kill()
+        except OSError:
+            pass
+        process.wait()
+        returncode = None
+    finally:
+        for reader, capture in zip(readers, (stdout_capture, stderr_capture)):
+            reader.join(timeout=1)
+            if reader.is_alive():
+                capture.truncated = True
+        for stream in (process.stdout, process.stderr):
+            _close_stream(stream)
+        for reader in readers:
+            reader.join(timeout=1)
+
+    return ProbeResult(
+        returncode,
+        stdout_capture.text(),
+        stderr_capture.text(),
+        stdout_capture.truncated,
+        stderr_capture.truncated,
+        timed_out,
+    )
 
 
 def inspect_environment(
@@ -113,9 +192,19 @@ def inspect_environment(
     detail = "draw.io command was not found"
     if command is not None:
         cli_state = "available" if probe_result and probe_result.returncode == 0 else "unavailable"
-        detail = "\n".join(
-            part for part in (probe_result.stdout, probe_result.stderr) if part
-        ) if probe_result else "draw.io probe produced no usable result"
+        if probe_result is None:
+            detail = "draw.io probe produced no usable result"
+        else:
+            detail_parts = [
+                part for part in (probe_result.stdout, probe_result.stderr) if part
+            ]
+            if probe_result.stdout_truncated:
+                detail_parts.append(f"stdout truncated after {MAX_CAPTURE_BYTES} bytes")
+            if probe_result.stderr_truncated:
+                detail_parts.append(f"stderr truncated after {MAX_CAPTURE_BYTES} bytes")
+            if probe_result.timed_out:
+                detail_parts.append("draw.io --version timed out after 15 seconds")
+            detail = "\n".join(detail_parts)
 
     return {
         "status": classify_readiness(skill_path, probe_result),
