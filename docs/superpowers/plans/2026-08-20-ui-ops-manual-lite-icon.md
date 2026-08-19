@@ -12,7 +12,7 @@
 
 - Work only on branch `feature/ui-ops-manual-lite-icon`; do not alter `ui-ops-manual`, `ui-diagrams`, or marketplace ordering.
 - Keep plugin ID `ui-ops-manual-lite`, skill name `ui-guide-lite`, and existing marketplace source path unchanged.
-- Preserve the existing `0.3.0` base version; update only its single `+codex.<UTC timestamp>` cachebuster once after source edits are final.
+- Preserve the existing `0.2.0` base version; update only its single `+codex.<UTC timestamp>` cachebuster once after source edits are final.
 - Retain editable SVG assets and write PNG preview counterparts; do not use a raster-only or text-bearing logo.
 - Validate embedded skill structure, plugin manifest, and icon paths before reinstalling from the already configured `codex-skills` marketplace.
 
@@ -31,7 +31,7 @@
 - Consumes: manifest interface icon paths `./skills/ui-guide-lite/assets/ui-ops-manual-lite-small.svg` and `./skills/ui-guide-lite/assets/ui-ops-manual-lite-large.svg`.
 - Produces: matching SVG and PNG assets where the small icon uses a `0 0 96 96` view box and the large icon uses a `0 0 512 512` view box.
 
-- [ ] **Step 1: Write the failing icon contract test**
+- [x] **Step 1: Write the failing icon contract test**
 
 ```python
 class LiteIconAssetTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class LiteIconAssetTests(unittest.TestCase):
             self.assertNotIn("#D64545", svg)
 ```
 
-- [ ] **Step 2: Run the new test to verify it fails**
+- [x] **Step 2: Run the new test to verify it fails**
 
 Run:
 
@@ -57,11 +57,11 @@ python -X utf8 plugins/ui-ops-manual-lite/skills/ui-guide-lite/tests/icon_assets
 
 Expected: FAIL because the current SVG descriptions do not contain `compact operation guide` and retain the red-frame colour.
 
-- [ ] **Step 3: Replace the SVGs and create matching PNG previews**
+- [x] **Step 3: Replace the SVGs and create matching PNG previews**
 
 Use the approved design in both SVGs: an indigo-teal rounded background, a white folded single-page guide, three teal checked lines, and a mint speed spark. Keep the large SVG at 512 × 512 and simplify the same visual language for the 96 × 96 small SVG. Rasterize the SVGs to identically named PNG files using local headless Chrome; retain SVG as the manifest-referenced source.
 
-- [ ] **Step 4: Run the icon contract test to verify it passes**
+- [x] **Step 4: Run the icon contract test to verify it passes**
 
 Run:
 
@@ -71,7 +71,7 @@ python -X utf8 plugins/ui-ops-manual-lite/skills/ui-guide-lite/tests/icon_assets
 
 Expected: PASS; all three manifest paths exist, both SVG view boxes are correct, compact-guide language is present, and no old red-frame colour remains.
 
-- [ ] **Step 5: Commit the asset and test change**
+- [x] **Step 5: Commit the asset and test change**
 
 ```powershell
 git add plugins/ui-ops-manual-lite/skills/ui-guide-lite/assets plugins/ui-ops-manual-lite/skills/ui-guide-lite/tests/icon_assets.tests.py
@@ -86,9 +86,9 @@ git commit -m "feat: refresh lite manual icon"
 
 **Interfaces:**
 - Consumes: the existing `codex-skills` marketplace entry, which still maps `ui-ops-manual-lite` to `./plugins/ui-ops-manual-lite`.
-- Produces: a single cachebuster form `0.3.0+codex.<UTC timestamp>` and a locally installed `ui-ops-manual-lite@codex-skills` matching the branch source.
+- Produces: a single cachebuster form `0.2.0+codex.<UTC timestamp>` and a locally installed `ui-ops-manual-lite@codex-skills` matching the branch source.
 
-- [ ] **Step 1: Confirm the source-only change has not changed plugin identity or icon path contracts**
+- [x] **Step 1: Confirm the source-only change has not changed plugin identity or icon path contracts**
 
 Run:
 
@@ -98,7 +98,7 @@ python -X utf8 plugins/ui-ops-manual-lite/skills/ui-guide-lite/tests/core_skill_
 
 Expected: PASS; plugin ID stays `ui-ops-manual-lite`, default prompts retain `$ui-guide-lite`, and all three icon fields remain under `./skills/ui-guide-lite/assets/`.
 
-- [ ] **Step 2: Apply one cachebuster update after all source edits are final**
+- [x] **Step 2: Apply one cachebuster update after all source edits are final**
 
 Run:
 
@@ -106,9 +106,9 @@ Run:
 python -X utf8 C:/Users/derick.chang/.codex/skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py D:/codex-skills/plugins/ui-ops-manual-lite
 ```
 
-Expected: only the `+codex.<timestamp>` suffix changes; the `0.3.0` base version is preserved.
+Expected: only the `+codex.<timestamp>` suffix changes; the `0.2.0` base version is preserved.
 
-- [ ] **Step 3: Validate the embedded skill, plugin, and icon contract**
+- [x] **Step 3: Validate the embedded skill, plugin, and icon contract**
 
 Run:
 
@@ -121,7 +121,7 @@ git diff --check origin/main..HEAD
 
 Expected: every command exits 0; no marketplace file is changed.
 
-- [ ] **Step 4: Reinstall the updated plugin from the configured marketplace**
+- [x] **Step 4: Reinstall the updated plugin from the configured marketplace**
 
 Run:
 
@@ -132,9 +132,15 @@ codex plugin list
 
 Expected: `ui-ops-manual-lite` is enabled and reports the cachebusted version produced in Step 2. Ask the user to test it from a new task so Codex reloads the skill metadata.
 
-- [ ] **Step 5: Mark completed plan tasks and commit delivery metadata**
+- [x] **Step 5: Mark completed plan tasks and commit delivery metadata**
 
 ```powershell
 git add plugins/ui-ops-manual-lite/.codex-plugin/plugin.json docs/superpowers/plans/2026-08-20-ui-ops-manual-lite-icon.md
 git commit -m "chore: release lite manual icon update"
 ```
+
+## Execution Record
+
+- The icon contract was first observed failing because the former red-frame SVGs and PNG counterparts did not exist; after the approved assets were added it passed (2 tests).
+- `quick_validate.py`, `validate_plugin.py`, and the existing core skill naming contract all passed.
+- The installed plugin is `ui-ops-manual-lite@codex-skills` version `0.2.0+codex.20260819161307` at `C:\Users\derick.chang\.codex\plugins\cache\codex-skills\ui-ops-manual-lite\0.2.0+codex.20260819161307`.
