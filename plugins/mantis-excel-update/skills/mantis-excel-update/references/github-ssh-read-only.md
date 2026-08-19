@@ -28,4 +28,3 @@
 | invalidReason | 失效後的簡短原因 |
 
 每次 SSH fallback 先驗證 active 項目的遠端 refs。驗證通過即使用並更新 lastVerifiedAt；不得再向使用者索取同一來源。驗證失敗、超過 expiresAt 或使用者撤銷時，改標為 invalid、更新 invalidReason，並改走使用者提供文件方案。只有使用者後續提供新的來源時，才新增或取代登錄。
-
