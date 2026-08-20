@@ -27,6 +27,7 @@ CONTRACT_FIXTURE = FIXTURES_DIR / "synthetic-artifact-contract.json"
 PREFLIGHT_FIXTURE = FIXTURES_DIR / "synthetic-preflight-snapshot.json"
 CSV_FIXTURE = FIXTURES_DIR / "synthetic-mantis-issues-44.csv"
 VALIDATOR = SKILL_DIR / "scripts" / "validate_artifact.py"
+DEFAULT_TEMPLATE = SKILL_DIR / "assets" / "template.xlsx"
 
 SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -117,8 +118,13 @@ def _issues_sheet_xml(
     shared_string_issue_ids: bool,
     shared_string_index_override: int | None,
     lose_leading_zero: bool,
+    tab_selected: bool,
 ) -> bytes:
-    root, sheet_data = _sheet_root(active_cell="A1", include_sheet_view=True)
+    root, sheet_data = _sheet_root(
+        active_cell="A1",
+        include_sheet_view=True,
+        tab_selected=tab_selected,
+    )
     if populated_row_visible_override not in {None, "hidden", "height"}:
         raise AssertionError(
             f"unsupported populated row visibility override: {populated_row_visible_override}",
@@ -189,6 +195,7 @@ def _summary_sheet_xml(
     formula_cache_overrides: dict[str, object],
     string_formula_caches: set[str],
     static_formula_cells: set[str],
+    additional_formula_cells: dict[str, tuple[str, str, object]],
 ) -> bytes:
     root, sheet_data = _sheet_root(
         active_cell="B2",
@@ -199,7 +206,8 @@ def _summary_sheet_xml(
     _append_inline_cell(header, "A1", "Statistic")
     _append_inline_cell(header, "B1", "Value")
 
-    for excel_row, (statistic, (cell_ref, formula, expected)) in enumerate(FORMULAS.items(), start=2):
+    formula_entries = list(FORMULAS.items()) + list(additional_formula_cells.items())
+    for excel_row, (statistic, (cell_ref, formula, expected)) in enumerate(formula_entries, start=2):
         row = ET.SubElement(sheet_data, _qualified(SPREADSHEET_NS, "row"), {"r": str(excel_row)})
         _append_inline_cell(row, f"A{excel_row}", statistic)
         cell_attributes = {"r": cell_ref}
@@ -286,6 +294,7 @@ def write_workbook(
     default_column_width: int | None = None,
     default_row_hidden: bool = False,
     populated_row_visible_override: str | None = None,
+    issue_tab_selected: bool = False,
     include_workbook_view: bool = True,
     include_workbook_internal_dtd: bool = False,
     include_summary_sheet_view: bool = True,
@@ -297,6 +306,7 @@ def write_workbook(
     formula_cache_overrides: dict[str, object] | None = None,
     string_formula_caches: set[str] | None = None,
     static_formula_cells: set[str] | None = None,
+    additional_formula_cells: dict[str, tuple[str, str, object]] | None = None,
     lose_leading_zero: bool = False,
 ) -> None:
     hidden_rows = hidden_rows or set()
@@ -305,6 +315,7 @@ def write_workbook(
     formula_cache_overrides = formula_cache_overrides or {}
     string_formula_caches = string_formula_caches or set()
     static_formula_cells = static_formula_cells or set()
+    additional_formula_cells = additional_formula_cells or {}
     shared_string_values: list[str] = []
     if shared_string_issue_ids:
         with CSV_FIXTURE.open(newline="", encoding="utf-8") as csv_file:
@@ -323,12 +334,14 @@ def write_workbook(
         shared_string_issue_ids=shared_string_issue_ids,
         shared_string_index_override=shared_string_index_override,
         lose_leading_zero=lose_leading_zero,
+        tab_selected=issue_tab_selected,
     )
     summary_sheet_xml = _summary_sheet_xml(
         include_sheet_view=include_summary_sheet_view,
         formula_cache_overrides=formula_cache_overrides,
         string_formula_caches=string_formula_caches,
         static_formula_cells=static_formula_cells,
+        additional_formula_cells=additional_formula_cells,
     )
     shared_strings_content_type = ""
     shared_strings_relationship = ""
@@ -452,6 +465,41 @@ def write_fake_libreoffice(
     convert_exit: int = 0,
     create_pdf: bool = True,
 ) -> Path:
+    if os.name == "nt":
+        executable = directory / "libreoffice.cmd"
+        create_pdf_command = (
+            'for %%F in ("%input%") do echo %%PDF-1.4 synthetic renderer output>"%outdir%\\%%~nF.pdf"'
+            if create_pdf
+            else "rem do not create a PDF"
+        )
+        executable.write_text(
+            f'''@echo off
+if "%~1"=="--version" (
+  echo LibreOffice synthetic 1.0
+  exit /b {probe_exit}
+)
+set "outdir="
+set "input="
+:next_argument
+if "%~1"=="" goto convert
+if "%~1"=="--outdir" (
+  set "outdir=%~2"
+  shift
+  shift
+  goto next_argument
+)
+if /I "%~x1"==".xlsx" set "input=%~1"
+shift
+goto next_argument
+:convert
+if not "{convert_exit}"=="0" exit /b {convert_exit}
+{create_pdf_command}
+exit /b 0
+''',
+            encoding="utf-8",
+        )
+        return executable
+
     executable = directory / "libreoffice"
     pdf_write = (
         'printf \'%s\\n\' \'%PDF-1.4 synthetic renderer output\' > "$outdir/${input_name%.xlsx}.pdf"'
@@ -493,7 +541,7 @@ exit 0
 
 def renderer_environment(renderer_directory: Path) -> dict[str, str]:
     environment = dict(os.environ)
-    environment["PATH"] = str(renderer_directory)
+    environment["PATH"] = str(renderer_directory) + os.pathsep + environment.get("PATH", "")
     return environment
 
 
@@ -503,6 +551,27 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def fixture_contract_payload() -> tuple[dict, dict]:
+    contract = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
+    preflight = json.loads(PREFLIGHT_FIXTURE.read_text(encoding="utf-8"))
+    for source in preflight["source_artifacts"]:
+        source_path = (PREFLIGHT_FIXTURE.parent / source["path"]).resolve()
+        source["path"] = str(source_path)
+        source["sha256"] = sha256(source_path)
+    contract["csv"]["path"] = str(CSV_FIXTURE)
+    return contract, preflight
+
+
+def write_fixture_contract(directory: Path) -> Path:
+    contract, preflight = fixture_contract_payload()
+    preflight_path = directory / "fixture-preflight-snapshot.json"
+    preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
+    contract["preflight_snapshot"]["path"] = str(preflight_path)
+    contract_path = directory / "fixture-artifact-contract.json"
+    contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
+    return contract_path
 
 
 def write_runtime_contract(directory: Path, source_csv: Path, seed_workbook: Path) -> Path:
@@ -529,10 +598,11 @@ def write_runtime_contract(directory: Path, source_csv: Path, seed_workbook: Pat
 
 
 def write_contract_with_summary_sheet(directory: Path, summary_sheet: str) -> Path:
-    contract = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
+    contract, preflight = fixture_contract_payload()
     contract["mapping"]["summary"]["sheet"] = summary_sheet
-    contract["csv"]["path"] = str(CSV_FIXTURE)
-    contract["preflight_snapshot"]["path"] = str(PREFLIGHT_FIXTURE)
+    preflight_path = directory / "summary-sheet-preflight.json"
+    preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
+    contract["preflight_snapshot"]["path"] = str(preflight_path)
     contract_path = directory / "summary-sheet-contract.json"
     contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
     return contract_path
@@ -544,15 +614,11 @@ def write_contract_with_formula_sheet(
     formula_name: str,
     formula_sheet: str,
 ) -> Path:
-    preflight = json.loads(PREFLIGHT_FIXTURE.read_text(encoding="utf-8"))
+    contract, preflight = fixture_contract_payload()
     preflight["formula_cells"][formula_name]["sheet"] = formula_sheet
-    for source in preflight["source_artifacts"]:
-        source["path"] = str((PREFLIGHT_FIXTURE.parent / source["path"]).resolve())
     preflight_path = directory / "formula-sheet-preflight.json"
     preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
 
-    contract = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
-    contract["csv"]["path"] = str(CSV_FIXTURE)
     contract["preflight_snapshot"]["path"] = str(preflight_path)
     contract_path = directory / "formula-sheet-contract.json"
     contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
@@ -565,15 +631,11 @@ def write_contract_with_formula_text(
     formula_name: str,
     formula: str,
 ) -> Path:
-    preflight = json.loads(PREFLIGHT_FIXTURE.read_text(encoding="utf-8"))
+    contract, preflight = fixture_contract_payload()
     preflight["formula_cells"][formula_name]["formula"] = formula
-    for source in preflight["source_artifacts"]:
-        source["path"] = str((PREFLIGHT_FIXTURE.parent / source["path"]).resolve())
     preflight_path = directory / "formula-text-preflight.json"
     preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
 
-    contract = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
-    contract["csv"]["path"] = str(CSV_FIXTURE)
     contract["preflight_snapshot"]["path"] = str(preflight_path)
     contract_path = directory / "formula-text-contract.json"
     contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
@@ -584,17 +646,90 @@ def write_contract_with_expected_issue_ids(
     directory: Path,
     expected_issue_ids: list[str],
 ) -> Path:
-    preflight = json.loads(PREFLIGHT_FIXTURE.read_text(encoding="utf-8"))
+    contract, preflight = fixture_contract_payload()
     preflight["expected_issue_ids"] = expected_issue_ids
-    for source in preflight["source_artifacts"]:
-        source["path"] = str((PREFLIGHT_FIXTURE.parent / source["path"]).resolve())
     preflight_path = directory / "expected-issue-ids-preflight.json"
     preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
 
-    contract = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
-    contract["csv"]["path"] = str(CSV_FIXTURE)
     contract["preflight_snapshot"]["path"] = str(preflight_path)
     contract_path = directory / "expected-issue-ids-contract.json"
+    contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
+    return contract_path
+
+
+def write_contract_with_additional_formula(
+    directory: Path,
+    *,
+    name: str,
+    cell: str,
+    formula: str,
+    cached_value: object,
+) -> Path:
+    contract, preflight = fixture_contract_payload()
+    preflight["formula_cells"][name] = {
+        "sheet": "Summary",
+        "cell": cell,
+        "formula": formula,
+        "cached_value": cached_value,
+    }
+    preflight_path = directory / "additional-formula-preflight.json"
+    preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
+    contract["preflight_snapshot"]["path"] = str(preflight_path)
+    contract_path = directory / "additional-formula-contract.json"
+    contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
+    return contract_path
+
+
+def rewrite_zip_member(path: Path, member_name: str, replacement: bytes) -> None:
+    replacement_path = path.with_suffix(".rewritten.xlsx")
+    with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(
+        replacement_path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as destination:
+        for entry in source.infolist():
+            destination.writestr(
+                entry,
+                replacement if entry.filename == member_name else source.read(entry.filename),
+            )
+    replacement_path.replace(path)
+
+
+def add_zip_member(path: Path, member_name: str, content: bytes) -> None:
+    replacement_path = path.with_suffix(".extended.xlsx")
+    with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(
+        replacement_path,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as destination:
+        for entry in source.infolist():
+            destination.writestr(entry, source.read(entry.filename))
+        destination.writestr(member_name, content)
+    replacement_path.replace(path)
+
+
+def write_contract_with_preservation(
+    directory: Path,
+    source_workbook: Path,
+    *,
+    protected_sheets: list[str] | None = None,
+    preserve_rule_comments: bool = False,
+    forbidden_drawing_names: list[str] | None = None,
+) -> Path:
+    contract, preflight = fixture_contract_payload()
+    preflight["source_artifacts"].append(
+        {"path": str(source_workbook), "sha256": sha256(source_workbook)},
+    )
+    preflight["preservation"] = {
+        "source_workbook": str(source_workbook),
+        "protected_sheets": protected_sheets or [],
+        "preserve_rule_comments": preserve_rule_comments,
+        "forbidden_drawing_names": forbidden_drawing_names or [],
+    }
+    preflight_path = directory / "preservation-preflight.json"
+    preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
+    contract["preflight_snapshot"]["path"] = str(preflight_path)
+    contract_path = directory / "preservation-contract.json"
     contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
     return contract_path
 
@@ -644,17 +779,23 @@ class ArtifactValidationCliTests(unittest.TestCase):
         renderer: str = "none",
         env: dict[str, str] | None = None,
         timeout_seconds: float | None = None,
+        visual_verdict: str | None = None,
     ):
+        if contract == CONTRACT_FIXTURE:
+            contract = write_fixture_contract(artifact.parent)
+        command = [
+            sys.executable,
+            str(VALIDATOR),
+            str(artifact),
+            "--contract",
+            str(contract),
+            "--renderer",
+            renderer,
+        ]
+        if visual_verdict is not None:
+            command.extend(["--visual-verdict", visual_verdict])
         result = subprocess.run(
-            [
-                sys.executable,
-                str(VALIDATOR),
-                str(artifact),
-                "--contract",
-                str(contract),
-                "--renderer",
-                renderer,
-            ],
+            command,
             cwd=SKILL_DIR,
             env=env,
             text=True,
@@ -696,6 +837,40 @@ class ArtifactValidationCliTests(unittest.TestCase):
         self.assertEqual("FAIL", report["outcome"])
         self.assertEqual(1, result.returncode, result.stderr)
         return matching_failures
+
+    def test_default_template_has_expected_seed_sheets_and_rule_comments(self):
+        with zipfile.ZipFile(DEFAULT_TEMPLATE) as workbook:
+            workbook_root = ET.fromstring(workbook.read("xl/workbook.xml"))
+            sheet_names = [
+                sheet.get("name")
+                for sheet in workbook_root.findall(
+                    f"{{{SPREADSHEET_NS}}}sheets/{{{SPREADSHEET_NS}}}sheet",
+                )
+            ]
+            rules = set()
+            drawing_names = []
+            for part_name in workbook.namelist():
+                if part_name.startswith("xl/comments") or part_name.startswith(
+                    "xl/threadedComments/",
+                ):
+                    root = ET.fromstring(workbook.read(part_name))
+                    for element in root.iter():
+                        if element.tag.rsplit("}", 1)[-1] not in {"comment", "threadedComment"}:
+                            continue
+                        payload = "".join(element.itertext()).strip()
+                        if "MANTIS_RULE_V1" in payload:
+                            rules.add((element.get("ref", ""), payload))
+                if part_name.startswith("xl/drawings/") and part_name.endswith(".xml"):
+                    root = ET.fromstring(workbook.read(part_name))
+                    drawing_names.extend(
+                        element.get("name")
+                        for element in root.iter()
+                        if element.get("name")
+                    )
+
+        self.assertEqual(["概要", "問題單清單", "過版調整"], sheet_names)
+        self.assertEqual(20, len(rules))
+        self.assertNotIn("Text Box 21", drawing_names)
 
     def test_valid_artifact_with_renderer_none_is_partial_and_has_stable_schema(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -1004,7 +1179,152 @@ class ArtifactValidationCliTests(unittest.TestCase):
             ("formula:in_progress", "validation_prerequisite"),
         )
 
-    def test_renderer_auto_with_non_empty_pdf_passes_all_layers(self):
+    def test_additional_confirmed_formula_with_cached_value_is_supported(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            formula = "(B2-29)/29"
+            artifact = directory / "additional-formula.xlsx"
+            write_workbook(
+                artifact,
+                additional_formula_cells={"in_progress_change": ("B7", formula, 0)},
+            )
+            contract = write_contract_with_additional_formula(
+                directory,
+                name="in_progress_change",
+                cell="B7",
+                formula=formula,
+                cached_value=0,
+            )
+
+            result, report = self.run_validator(artifact, contract=contract)
+
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("PARTIAL", report["outcome"])
+        formula_layer = report["layers"]["formula_cache"]
+        self.assertEqual("PASS", formula_layer["status"])
+        self.assertTrue(
+            any(
+                evidence["check"] == "cached_value:in_progress_change"
+                and evidence["status"] == "PASS"
+                for evidence in formula_layer["evidence"]
+            ),
+        )
+
+    def test_changed_protected_sheet_semantics_fail_data_correctness(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source_workbook = directory / "source.xlsx"
+            artifact = directory / "artifact.xlsx"
+            write_workbook(source_workbook)
+            write_workbook(artifact)
+            with zipfile.ZipFile(artifact) as workbook:
+                summary_xml = workbook.read("xl/worksheets/sheet2.xml")
+            rewrite_zip_member(
+                artifact,
+                "xl/worksheets/sheet2.xml",
+                summary_xml.replace(b">Statistic<", b">Changed<", 1),
+            )
+            contract = write_contract_with_preservation(
+                directory,
+                source_workbook,
+                protected_sheets=["Summary"],
+            )
+
+            result, report = self.run_validator(artifact, contract=contract)
+
+        self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "protected_sheet_semantics:Summary",
+        )
+
+    def test_matching_protected_sheet_semantics_remain_valid(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source_workbook = directory / "source.xlsx"
+            artifact = directory / "artifact.xlsx"
+            write_workbook(source_workbook)
+            write_workbook(artifact)
+            contract = write_contract_with_preservation(
+                directory,
+                source_workbook,
+                protected_sheets=["Summary"],
+            )
+
+            result, report = self.run_validator(artifact, contract=contract)
+
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("PARTIAL", report["outcome"])
+        self.assertTrue(
+            any(
+                evidence["check"] == "protected_sheet_semantics:Summary"
+                and evidence["status"] == "PASS"
+                for evidence in report["layers"]["data_correctness"]["evidence"]
+            ),
+        )
+
+    def test_lost_versioned_rule_comment_fails_data_correctness(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source_workbook = directory / "source-with-rule-comment.xlsx"
+            artifact = directory / "artifact-without-rule-comment.xlsx"
+            write_workbook(source_workbook)
+            write_workbook(artifact)
+            add_zip_member(
+                source_workbook,
+                "xl/comments1.xml",
+                b'''<?xml version="1.0" encoding="UTF-8"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <commentList><comment ref="E3"><text><t>MANTIS_RULE_V1:${in_progress}</t></text></comment></commentList>
+</comments>''',
+            )
+            contract = write_contract_with_preservation(
+                directory,
+                source_workbook,
+                preserve_rule_comments=True,
+            )
+
+            result, report = self.run_validator(artifact, contract=contract)
+
+        self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "versioned_rule_comments",
+        )
+
+    def test_confirmed_forbidden_text_box_fails_data_correctness(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source_workbook = directory / "source.xlsx"
+            artifact = directory / "artifact-with-text-box.xlsx"
+            write_workbook(source_workbook)
+            write_workbook(artifact)
+            add_zip_member(
+                artifact,
+                "xl/drawings/drawing1.xml",
+                b'''<?xml version="1.0" encoding="UTF-8"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing">
+  <xdr:twoCellAnchor><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="21" name="Text Box 21"/></xdr:nvSpPr></xdr:sp></xdr:twoCellAnchor>
+</xdr:wsDr>''',
+            )
+            contract = write_contract_with_preservation(
+                directory,
+                source_workbook,
+                forbidden_drawing_names=["Text Box 21"],
+            )
+
+            result, report = self.run_validator(artifact, contract=contract)
+
+        self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "forbidden_drawing_names",
+        )
+
+    def test_renderer_auto_with_confirmed_visual_verdict_passes_all_layers(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             renderer_directory = directory / "renderer"
@@ -1017,6 +1337,7 @@ class ArtifactValidationCliTests(unittest.TestCase):
                 artifact,
                 renderer="auto",
                 env=renderer_environment(renderer_directory),
+                visual_verdict="pass",
             )
 
         self.assertEqual(0, result.returncode, result.stderr)
@@ -1024,6 +1345,31 @@ class ArtifactValidationCliTests(unittest.TestCase):
         self.assertEqual(
             ["PASS", "PASS", "PASS", "PASS"],
             [layer["status"] for layer in report["layers"].values()],
+        )
+
+    def test_renderer_pdf_export_without_visual_verdict_is_partial(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            renderer_directory = directory / "renderer"
+            renderer_directory.mkdir()
+            write_fake_libreoffice(renderer_directory)
+            artifact = directory / "renderer-needs-visual-verdict.xlsx"
+            write_workbook(artifact)
+
+            result, report = self.run_validator(
+                artifact,
+                renderer="auto",
+                env=renderer_environment(renderer_directory),
+            )
+
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("PARTIAL", report["outcome"])
+        self.assertEqual("NOT RUN", report["layers"]["rendering"]["status"])
+        self.assertTrue(
+            any(
+                evidence["check"] == "real_render" and evidence["status"] == "PASS"
+                for evidence in report["layers"]["rendering"]["evidence"]
+            ),
         )
 
     def test_renderer_probe_failure_fails_rendering(self):
@@ -1072,6 +1418,20 @@ class ArtifactValidationCliTests(unittest.TestCase):
             report,
             "visibility",
             "populated_issue_rows_visible",
+        )
+
+    def test_conflicting_tab_selected_sheet_view_fails_visibility(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "conflicting-tab-selection.xlsx"
+            write_workbook(artifact, issue_tab_selected=True)
+
+            result, report = self.run_validator(artifact)
+
+        self.assert_layer_failure(
+            result,
+            report,
+            "visibility",
+            "conflicting_sheet_selection",
         )
 
     def test_zero_height_sheet_default_does_not_hide_explicit_populated_rows(self):

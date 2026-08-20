@@ -240,14 +240,22 @@ class LayerResult:
             if failure not in self.reasons:
                 self.reasons.append(failure)
 
-    def not_run(self, reason: str, *, source: str, actual: Any) -> None:
+    def not_run(
+        self,
+        reason: str,
+        *,
+        source: str,
+        actual: Any,
+        check: str = "renderer_availability",
+        expected: Any = "available read-only renderer",
+    ) -> None:
         self.forced_status = "NOT RUN"
         self.evidence.append(
             Evidence(
-                "renderer_availability",
+                check,
                 "NOT RUN",
                 source,
-                "available read-only renderer",
+                expected,
                 actual,
             )
         )
@@ -644,6 +652,7 @@ class LoadedInputs:
     expected_statistics: dict[str, int]
     expected_issue_ids: list[str]
     updated_range: CellRange
+    preservation: dict[str, Any] | None
 
 
 def load_inputs(artifact: Path, contract_path: Path) -> LoadedInputs:
@@ -792,6 +801,7 @@ def load_inputs(artifact: Path, contract_path: Path) -> LoadedInputs:
     formula_cells = require_object(preflight, "formula_cells", "preflight")
     if not formula_cells:
         raise ValidationInputError("preflight.formula_cells must not be empty")
+    statistic_formula_names: list[str] = []
     for name, formula_config in formula_cells.items():
         if not isinstance(name, str) or not isinstance(formula_config, dict):
             raise ValidationInputError("preflight.formula_cells entries must be named objects")
@@ -800,15 +810,43 @@ def load_inputs(artifact: Path, contract_path: Path) -> LoadedInputs:
             require_string(formula_config, "cell", f"preflight.formula_cells.{name}")
         )
         require_string(formula_config, "formula", f"preflight.formula_cells.{name}")
-        statistic = require_string(
-            formula_config,
-            "statistic",
-            f"preflight.formula_cells.{name}",
-        )
-        if statistic not in expected_statistics:
-            raise ValidationInputError(
-                f"preflight.formula_cells.{name}.statistic is unknown: {statistic}"
+        statistic = formula_config.get("statistic")
+        if statistic is not None:
+            if "cached_value" in formula_config:
+                raise ValidationInputError(
+                    f"preflight.formula_cells.{name} must use either statistic or cached_value"
+                )
+            statistic = require_string(
+                formula_config,
+                "statistic",
+                f"preflight.formula_cells.{name}",
             )
+            if statistic not in expected_statistics:
+                raise ValidationInputError(
+                    f"preflight.formula_cells.{name}.statistic is unknown: {statistic}"
+                )
+            statistic_formula_names.append(statistic)
+            continue
+        raw_cached_value = formula_config.get("cached_value")
+        if isinstance(raw_cached_value, bool) or not isinstance(
+            raw_cached_value,
+            (int, float, str),
+        ):
+            raise ValidationInputError(
+                f"preflight.formula_cells.{name}.cached_value must be a numeric JSON value"
+            )
+        try:
+            Decimal(str(raw_cached_value))
+        except InvalidOperation as error:
+            raise ValidationInputError(
+                f"preflight.formula_cells.{name}.cached_value must be numeric"
+            ) from error
+    if set(statistic_formula_names) != set(EXPECTED_STATISTIC_KEYS) or len(
+        statistic_formula_names
+    ) != len(EXPECTED_STATISTIC_KEYS):
+        raise ValidationInputError(
+            "preflight.formula_cells must include each expected statistic exactly once"
+        )
 
     raw_sources = preflight.get("source_artifacts")
     if not isinstance(raw_sources, list):
@@ -832,6 +870,53 @@ def load_inputs(artifact: Path, contract_path: Path) -> LoadedInputs:
             "preflight.source_artifacts must pin the confirmed CSV path and SHA-256"
         )
 
+    preservation: dict[str, Any] | None = None
+    raw_preservation = preflight.get("preservation")
+    if raw_preservation is not None:
+        if not isinstance(raw_preservation, dict):
+            raise ValidationInputError("preflight.preservation must be an object")
+        preservation_source = resolve_relative(
+            preflight_path,
+            require_string(raw_preservation, "source_workbook", "preflight.preservation"),
+        )
+        if preservation_source not in {path for path, _ in source_artifacts}:
+            raise ValidationInputError(
+                "preflight.preservation.source_workbook must be pinned in source_artifacts"
+            )
+        protected_sheets = raw_preservation.get("protected_sheets")
+        if (
+            not isinstance(protected_sheets, list)
+            or any(not isinstance(name, str) or not name.strip() for name in protected_sheets)
+            or len(set(protected_sheets)) != len(protected_sheets)
+        ):
+            raise ValidationInputError(
+                "preflight.preservation.protected_sheets must be a unique string array"
+            )
+        preserve_rule_comments = raw_preservation.get("preserve_rule_comments", False)
+        if not isinstance(preserve_rule_comments, bool):
+            raise ValidationInputError(
+                "preflight.preservation.preserve_rule_comments must be boolean"
+            )
+        forbidden_drawing_names = raw_preservation.get("forbidden_drawing_names", [])
+        if (
+            not isinstance(forbidden_drawing_names, list)
+            or any(not isinstance(name, str) or not name.strip() for name in forbidden_drawing_names)
+            or len(set(forbidden_drawing_names)) != len(forbidden_drawing_names)
+        ):
+            raise ValidationInputError(
+                "preflight.preservation.forbidden_drawing_names must be a unique string array"
+            )
+        if not protected_sheets and not preserve_rule_comments and not forbidden_drawing_names:
+            raise ValidationInputError(
+                "preflight.preservation must declare a protected sheet, rule comments, or forbidden drawing"
+            )
+        preservation = {
+            "source_workbook": preservation_source,
+            "protected_sheets": protected_sheets,
+            "preserve_rule_comments": preserve_rule_comments,
+            "forbidden_drawing_names": forbidden_drawing_names,
+        }
+
     return LoadedInputs(
         artifact=artifact,
         contract_path=contract_path,
@@ -847,6 +932,7 @@ def load_inputs(artifact: Path, contract_path: Path) -> LoadedInputs:
         expected_statistics=expected_statistics,
         expected_issue_ids=expected_issue_ids,
         updated_range=updated_range,
+        preservation=preservation,
     )
 
 
@@ -907,6 +993,200 @@ def source_hashes(
             reason="validator refuses to treat a declared source/seed as the output artifact",
         )
     return actual_hashes
+
+
+def local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def style_signatures(path: Path) -> list[str]:
+    """Resolve cell style IDs to stable cell-XF descriptions for sheet comparison."""
+
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            if "xl/styles.xml" not in archive.namelist():
+                return []
+            root = read_xml_part(archive, "xl/styles.xml")
+    except (OSError, zipfile.BadZipFile, KeyError) as error:
+        raise ValidationInputError(f"cannot read styles from {path}: {error}") from error
+    cell_xfs = root.find(spreadsheet_tag("cellXfs"))
+    if cell_xfs is None:
+        return []
+    return [
+        json.dumps(canonical_xml(child, []), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for child in cell_xfs.findall(spreadsheet_tag("xf"))
+    ]
+
+
+def canonical_xml(element: ET.Element, styles: Sequence[str]) -> dict[str, Any]:
+    """Represent worksheet XML independent of serialization order and cell style IDs."""
+
+    element_name = local_name(element.tag)
+    attributes: dict[str, Any] = {}
+    for raw_name, value in element.attrib.items():
+        name = local_name(raw_name)
+        if raw_name == qualified(OFFICE_REL_NS, "id"):
+            continue
+        if name in {"s", "style"} and element_name in {"c", "row", "col"}:
+            try:
+                attributes[name] = {"cell_xf": styles[int(value)]}
+            except (IndexError, ValueError):
+                attributes[name] = {"invalid_cell_xf": value}
+            continue
+        attributes[name] = value
+    children = [canonical_xml(child, styles) for child in list(element)]
+    children.sort(
+        key=lambda child: json.dumps(child, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    )
+    return {
+        "tag": element.tag,
+        "attributes": attributes,
+        "text": (element.text or "").strip(),
+        "children": children,
+    }
+
+
+def sheet_semantics(path: Path, sheet: Sheet) -> dict[str, Any]:
+    return {
+        "state": sheet.state,
+        "worksheet": canonical_xml(sheet.root, style_signatures(path)),
+    }
+
+
+def versioned_rule_comments(path: Path) -> Counter[tuple[str, str]]:
+    """Read MANTIS_RULE_V1 payloads from legacy and threaded comments without double-counting."""
+
+    rules: set[tuple[str, str]] = set()
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            for part_name in archive.namelist():
+                if not (
+                    part_name.startswith("xl/comments")
+                    or part_name.startswith("xl/threadedComments/")
+                ):
+                    continue
+                root = read_xml_part(archive, part_name)
+                for element in root.iter():
+                    if local_name(element.tag) not in {"comment", "threadedComment"}:
+                        continue
+                    payload = "".join(element.itertext()).strip()
+                    if "MANTIS_RULE_V1" in payload:
+                        rules.add((element.get("ref", ""), payload))
+    except (OSError, zipfile.BadZipFile, KeyError) as error:
+        raise ValidationInputError(f"cannot inspect comment rules in {path}: {error}") from error
+    return Counter(rules)
+
+
+def drawing_names(path: Path) -> list[str]:
+    names: list[str] = []
+    try:
+        with zipfile.ZipFile(path, "r") as archive:
+            for part_name in archive.namelist():
+                if not part_name.startswith("xl/drawings/") or not part_name.endswith(".xml"):
+                    continue
+                root = read_xml_part(archive, part_name)
+                names.extend(
+                    name.strip()
+                    for element in root.iter()
+                    for name in [element.get("name")]
+                    if name and name.strip()
+                )
+    except (OSError, zipfile.BadZipFile, KeyError) as error:
+        raise ValidationInputError(f"cannot inspect drawings in {path}: {error}") from error
+    return sorted(names)
+
+
+def validate_preservation(
+    inputs: LoadedInputs,
+    workbook: WorkbookArtifact,
+    layer: LayerResult,
+) -> None:
+    preservation = inputs.preservation
+    if preservation is None:
+        return
+    source_path: Path = preservation["source_workbook"]
+    try:
+        source_workbook = read_workbook_artifact(source_path)
+    except ValidationInputError as error:
+        layer.check(
+            "preservation_source_workbook",
+            False,
+            source=str(source_path),
+            expected="readable source workbook for semantic comparison",
+            actual=str(error),
+            reason="cannot reopen the preservation source workbook",
+        )
+        return
+    for sheet_name in preservation["protected_sheets"]:
+        source_sheet = source_workbook.sheet(sheet_name)
+        artifact_sheet = workbook.sheet(sheet_name)
+        try:
+            expected = sheet_semantics(source_path, source_sheet) if source_sheet else None
+            actual = sheet_semantics(inputs.artifact, artifact_sheet) if artifact_sheet else None
+        except ValidationInputError as error:
+            layer.check(
+                f"protected_sheet_semantics:{sheet_name}",
+                False,
+                source=f"{source_path} -> {inputs.artifact}",
+                expected="readable normalized worksheet semantics",
+                actual=str(error),
+                reason=f"cannot compare protected sheet semantics: {sheet_name}",
+            )
+            continue
+        layer.check(
+            f"protected_sheet_semantics:{sheet_name}",
+            source_sheet is not None and artifact_sheet is not None and expected == actual,
+            source=f"{source_path} -> {inputs.artifact}",
+            expected=expected,
+            actual=actual,
+            reason=f"protected sheet changed semantically or is missing: {sheet_name}",
+        )
+    if preservation["preserve_rule_comments"]:
+        try:
+            expected_rules = versioned_rule_comments(source_path)
+            actual_rules = versioned_rule_comments(inputs.artifact)
+        except ValidationInputError as error:
+            layer.check(
+                "versioned_rule_comments",
+                False,
+                source=f"{source_path} -> {inputs.artifact}:comments/threadedComments",
+                expected="readable legacy and threaded MANTIS rules",
+                actual=str(error),
+                reason="cannot compare versioned MANTIS rule comments",
+            )
+            expected_rules = actual_rules = None
+        if expected_rules is not None and actual_rules is not None:
+            layer.check(
+                "versioned_rule_comments",
+                expected_rules == actual_rules,
+                source=f"{source_path} -> {inputs.artifact}:comments/threadedComments",
+                expected={"count": sum(expected_rules.values()), "rules": sorted(expected_rules.elements())},
+                actual={"count": sum(actual_rules.values()), "rules": sorted(actual_rules.elements())},
+                reason="versioned MANTIS rule comments changed or were lost",
+            )
+    forbidden_names = preservation["forbidden_drawing_names"]
+    if forbidden_names:
+        try:
+            actual_names = drawing_names(inputs.artifact)
+        except ValidationInputError as error:
+            layer.check(
+                "forbidden_drawing_names",
+                False,
+                source=f"{inputs.artifact}:xl/drawings/*.xml",
+                expected={"absent": forbidden_names},
+                actual=str(error),
+                reason="cannot inspect drawings for confirmed forbidden objects",
+            )
+            return
+        present = sorted(set(forbidden_names) & set(actual_names))
+        layer.check(
+            "forbidden_drawing_names",
+            not present,
+            source=f"{inputs.artifact}:xl/drawings/*.xml",
+            expected={"absent": forbidden_names},
+            actual={"present": present, "drawing_names": actual_names},
+            reason="a confirmed forbidden floating drawing remains in the artifact",
+        )
 
 
 def validate_data(
@@ -1264,6 +1544,25 @@ def validate_visibility(
         reason="confirmed summary sheet is missing, hidden, or veryHidden",
     )
 
+    selected_sheet_views: list[str] = []
+    for candidate_sheet in workbook.sheets:
+        candidate_views = candidate_sheet.root.find(spreadsheet_tag("sheetViews"))
+        if candidate_views is None:
+            continue
+        if any(
+            (view.get("tabSelected") or "").strip().lower() in {"1", "true"}
+            for view in candidate_views.findall(spreadsheet_tag("sheetView"))
+        ):
+            selected_sheet_views.append(candidate_sheet.name)
+    layer.check(
+        "conflicting_sheet_selection",
+        not selected_sheet_views or selected_sheet_views == [expected_active_sheet],
+        source=f"{inputs.artifact}:xl/worksheets/*/sheetViews/sheetView@tabSelected",
+        expected={"selected_sheets": [], "or_single_active_sheet": expected_active_sheet},
+        actual={"selected_sheets": selected_sheet_views},
+        reason="sheet view selection conflicts with the confirmed active workbook sheet",
+    )
+
     selection: ET.Element | None = None
     if active_sheet is not None:
         sheet_views = active_sheet.root.find(spreadsheet_tag("sheetViews"))
@@ -1392,7 +1691,11 @@ def validate_formula_cache(
     layer: LayerResult,
 ) -> None:
     formula_cells = inputs.preflight["formula_cells"]
-    statistics = [config["statistic"] for config in formula_cells.values()]
+    statistics = [
+        config["statistic"]
+        for config in formula_cells.values()
+        if "statistic" in config
+    ]
     coordinates = [
         (config["sheet"], config["cell"].replace("$", "").upper())
         for config in formula_cells.values()
@@ -1461,8 +1764,12 @@ def validate_formula_cache(
             reason=f"confirmed formula is missing or changed at {sheet_name}!{reference}",
         )
 
-        statistic = config["statistic"]
-        expected_value = inputs.expected_statistics[statistic]
+        statistic = config.get("statistic")
+        expected_value = (
+            inputs.expected_statistics[statistic]
+            if statistic is not None
+            else config["cached_value"]
+        )
         raw_cached = cell.cached_value if cell is not None else None
         cached_error = cell is not None and cell.data_type == "e"
         numeric_cache_type = cell is not None and cell.data_type in {None, "n"}
@@ -1477,7 +1784,7 @@ def validate_formula_cache(
                 numeric_value = Decimal(raw_cached)
             except InvalidOperation:
                 numeric_value = None
-        cache_matches = numeric_cache_type and numeric_value == Decimal(expected_value)
+        cache_matches = numeric_cache_type and numeric_value == Decimal(str(expected_value))
         layer.check(
             f"cached_value:{name}",
             cache_matches and not cached_error,
@@ -1512,6 +1819,7 @@ def validate_rendering(
     workbook: WorkbookArtifact,
     layer: LayerResult,
     renderer_mode: str,
+    visual_verdict: str,
 ) -> None:
     if renderer_mode == "none":
         layer.not_run(
@@ -1619,6 +1927,34 @@ def validate_rendering(
         },
         reason="real renderer did not produce a non-empty PDF from the persisted workbook",
     )
+    if result.returncode != 0 or rendered_size == 0:
+        return
+    if visual_verdict == "pass":
+        layer.check(
+            "visual_inspection",
+            True,
+            source="--visual-verdict pass",
+            expected="a capable renderer or reviewer confirmed the visible workbook content",
+            actual={"verdict": "pass", "renderer": version, "pdf_bytes": rendered_size},
+        )
+        return
+    if visual_verdict == "fail":
+        layer.check(
+            "visual_inspection",
+            False,
+            source="--visual-verdict fail",
+            expected="a capable renderer or reviewer confirmed the visible workbook content",
+            actual={"verdict": "fail", "renderer": version, "pdf_bytes": rendered_size},
+            reason="visual inspection found a workbook presentation defect",
+        )
+        return
+    layer.not_run(
+        "renderer generated a PDF, but no visual content inspection was recorded",
+        source="--visual-verdict not-run",
+        actual={"renderer": version, "pdf_bytes": rendered_size},
+        check="visual_inspection",
+        expected="visual confirmation when a capable rendering workflow is available",
+    )
 
 
 def outcome_for(layers: dict[str, LayerResult]) -> str:
@@ -1657,6 +1993,7 @@ def validate_artifact(
     artifact: Path,
     contract_path: Path,
     renderer_mode: str,
+    visual_verdict: str,
 ) -> dict[str, Any]:
     layers = initial_layers()
     resolved_artifact = artifact.expanduser().resolve()
@@ -1697,6 +2034,7 @@ def validate_artifact(
         workbook,
         data_layer,
     )
+    validate_preservation(inputs, workbook, data_layer)
     validate_visibility(
         inputs,
         workbook,
@@ -1706,7 +2044,13 @@ def validate_artifact(
         layers["visibility"],
     )
     validate_formula_cache(inputs, workbook, layers["formula_cache"])
-    validate_rendering(inputs, workbook, layers["rendering"], renderer_mode)
+    validate_rendering(
+        inputs,
+        workbook,
+        layers["rendering"],
+        renderer_mode,
+        visual_verdict,
+    )
 
     for path, expected_hash in inputs.source_artifacts:
         try:
@@ -1756,12 +2100,23 @@ def parse_arguments(argv: Sequence[str]) -> argparse.Namespace:
         default="auto",
         help="probe an existing LibreOffice renderer, or declare it unavailable",
     )
+    parser.add_argument(
+        "--visual-verdict",
+        choices=("pass", "fail", "not-run"),
+        default="not-run",
+        help="record a visual inspection result; without it, rendering remains NOT RUN",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
-    report = validate_artifact(arguments.artifact, arguments.contract, arguments.renderer)
+    report = validate_artifact(
+        arguments.artifact,
+        arguments.contract,
+        arguments.renderer,
+        arguments.visual_verdict,
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return {
         "PASS": EXIT_PASS,
