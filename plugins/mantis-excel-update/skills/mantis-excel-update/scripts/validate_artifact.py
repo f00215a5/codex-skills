@@ -395,11 +395,16 @@ def cell_text(element: ET.Element, shared_strings: Sequence[str]) -> str | None:
         return None
     if data_type == "s":
         try:
-            return shared_strings[int(value.text)]
-        except (ValueError, IndexError) as error:
+            index = int(value.text)
+        except ValueError as error:
             raise ValidationInputError(
                 f"invalid shared string index {value.text!r} in {element.get('r')!r}"
             ) from error
+        if not 0 <= index < len(shared_strings):
+            raise ValidationInputError(
+                f"invalid shared string index {value.text!r} in {element.get('r')!r}"
+            )
+        return shared_strings[index]
     return value.text
 
 
@@ -529,15 +534,28 @@ def read_workbook_artifact(path: Path) -> WorkbookArtifact:
     return WorkbookArtifact(path, workbook_root, sheets)
 
 
-def row_is_visible(row: ET.Element | None) -> bool:
+def row_is_visible(sheet: Sheet, row: ET.Element | None) -> bool:
     if row is None:
         return False
-    if row.get("hidden") in {"1", "true", "True"}:
+    hidden = (row.get("hidden") or "").lower()
+    if hidden in {"1", "true"}:
         return False
     raw_height = row.get("ht")
     if raw_height is not None:
         try:
             if Decimal(raw_height) <= 0:
+                return False
+        except InvalidOperation:
+            return False
+        return True
+    sheet_format = sheet.root.find(spreadsheet_tag("sheetFormatPr"))
+    if sheet_format is None:
+        return True
+    # zeroHeight is the default only for omitted rows; every row here is explicit.
+    default_height = sheet_format.get("defaultRowHeight")
+    if default_height is not None:
+        try:
+            if Decimal(default_height) <= 0:
                 return False
         except InvalidOperation:
             return False
@@ -1306,7 +1324,7 @@ def validate_visibility(
     header_row = inputs.issue_mapping["header_row"]
     layer.check(
         "header_row_visibility",
-        row_is_visible(issue_sheet.row_element(header_row)),
+        row_is_visible(issue_sheet, issue_sheet.row_element(header_row)),
         source=f"{inputs.artifact}:{issue_sheet.part_name}/sheetData/row[@r='{header_row}']",
         expected={"row": header_row, "visible": True, "height_gt_zero": True},
         actual={
@@ -1321,7 +1339,7 @@ def validate_visibility(
     hidden_data_rows = [
         cell.row
         for cell in actual_issue_cells
-        if not row_is_visible(issue_sheet.row_element(cell.row))
+        if not row_is_visible(issue_sheet, issue_sheet.row_element(cell.row))
     ]
     visible_count = len(actual_issue_cells) - len(hidden_data_rows)
     layer.check(

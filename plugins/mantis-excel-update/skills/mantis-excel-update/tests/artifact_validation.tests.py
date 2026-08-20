@@ -61,6 +61,26 @@ def _append_number_cell(row: ET.Element, reference: str, value: int) -> None:
     ET.SubElement(cell, _qualified(SPREADSHEET_NS, "v")).text = str(value)
 
 
+def _append_shared_string_cell(row: ET.Element, reference: str, index: int) -> None:
+    cell = ET.SubElement(
+        row,
+        _qualified(SPREADSHEET_NS, "c"),
+        {"r": reference, "t": "s"},
+    )
+    ET.SubElement(cell, _qualified(SPREADSHEET_NS, "v")).text = str(index)
+
+
+def _shared_strings_xml(values: list[str]) -> bytes:
+    root = ET.Element(
+        _qualified(SPREADSHEET_NS, "sst"),
+        {"count": str(len(values)), "uniqueCount": str(len(values))},
+    )
+    for value in values:
+        item = ET.SubElement(root, _qualified(SPREADSHEET_NS, "si"))
+        ET.SubElement(item, _qualified(SPREADSHEET_NS, "t")).text = value
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
 def _sheet_root(
     *,
     active_cell: str,
@@ -92,13 +112,26 @@ def _issues_sheet_xml(
     hidden_columns: set[str],
     zero_width_columns: set[str],
     default_column_width: int | None,
+    default_row_hidden: bool,
+    populated_row_visible_override: str | None,
+    shared_string_issue_ids: bool,
+    shared_string_index_override: int | None,
     lose_leading_zero: bool,
 ) -> bytes:
     root, sheet_data = _sheet_root(active_cell="A1", include_sheet_view=True)
+    if populated_row_visible_override not in {None, "hidden", "height"}:
+        raise AssertionError(
+            f"unsupported populated row visibility override: {populated_row_visible_override}",
+        )
+    sheet_format_attributes = {}
     if default_column_width is not None:
+        sheet_format_attributes["defaultColWidth"] = str(default_column_width)
+    if default_row_hidden:
+        sheet_format_attributes["zeroHeight"] = "1"
+    if sheet_format_attributes:
         sheet_format = ET.Element(
             _qualified(SPREADSHEET_NS, "sheetFormatPr"),
-            {"defaultColWidth": str(default_column_width)},
+            sheet_format_attributes,
         )
         root.insert(list(root).index(sheet_data), sheet_format)
     if hidden_columns or zero_width_columns:
@@ -113,18 +146,35 @@ def _issues_sheet_xml(
                 attributes.update({"width": "0", "customWidth": "1"})
             ET.SubElement(columns, _qualified(SPREADSHEET_NS, "col"), attributes)
         root.insert(list(root).index(sheet_data), columns)
-    header = ET.SubElement(sheet_data, _qualified(SPREADSHEET_NS, "row"), {"r": "1"})
+    def visible_row_attributes(row_number: int) -> dict[str, str]:
+        attributes = {"r": str(row_number)}
+        if populated_row_visible_override == "hidden":
+            attributes["hidden"] = "0"
+        elif populated_row_visible_override == "height":
+            attributes.update({"ht": "15", "customHeight": "1"})
+        return attributes
+
+    header = ET.SubElement(
+        sheet_data,
+        _qualified(SPREADSHEET_NS, "row"),
+        visible_row_attributes(1),
+    )
     for column, value in zip(("A", "B", "C"), ("Issue ID", "Status", "Summary")):
         _append_inline_cell(header, f"{column}1", value)
 
     with CSV_FIXTURE.open(newline="", encoding="utf-8") as csv_file:
         issues = list(csv.DictReader(csv_file))
     for excel_row, issue in enumerate(issues, start=2):
-        attributes = {"r": str(excel_row)}
+        attributes = visible_row_attributes(excel_row)
         if excel_row in hidden_rows:
             attributes["hidden"] = "1"
         row = ET.SubElement(sheet_data, _qualified(SPREADSHEET_NS, "row"), attributes)
-        if lose_leading_zero and excel_row == 2:
+        if shared_string_issue_ids:
+            shared_string_index = excel_row - 2
+            if excel_row == 2 and shared_string_index_override is not None:
+                shared_string_index = shared_string_index_override
+            _append_shared_string_cell(row, f"A{excel_row}", shared_string_index)
+        elif lose_leading_zero and excel_row == 2:
             _append_number_cell(row, f"A{excel_row}", int(issue["Issue ID"]))
         else:
             _append_inline_cell(row, f"A{excel_row}", issue["Issue ID"])
@@ -234,12 +284,16 @@ def write_workbook(
     hidden_columns: set[str] | None = None,
     zero_width_columns: set[str] | None = None,
     default_column_width: int | None = None,
+    default_row_hidden: bool = False,
+    populated_row_visible_override: str | None = None,
     include_workbook_view: bool = True,
     include_workbook_internal_dtd: bool = False,
     include_summary_sheet_view: bool = True,
     duplicate_workbook_part: bool = False,
     duplicate_issue_worksheet_part: bool = False,
     oversized_xml_payload_bytes: int | None = None,
+    shared_string_issue_ids: bool = False,
+    shared_string_index_override: int | None = None,
     formula_cache_overrides: dict[str, object] | None = None,
     string_formula_caches: set[str] | None = None,
     static_formula_cells: set[str] | None = None,
@@ -251,6 +305,10 @@ def write_workbook(
     formula_cache_overrides = formula_cache_overrides or {}
     string_formula_caches = string_formula_caches or set()
     static_formula_cells = static_formula_cells or set()
+    shared_string_values: list[str] = []
+    if shared_string_issue_ids:
+        with CSV_FIXTURE.open(newline="", encoding="utf-8") as csv_file:
+            shared_string_values = [issue["Issue ID"] for issue in csv.DictReader(csv_file)]
     workbook_xml = _workbook_xml(
         include_workbook_view=include_workbook_view,
         include_internal_dtd=include_workbook_internal_dtd,
@@ -260,6 +318,10 @@ def write_workbook(
         hidden_columns=hidden_columns,
         zero_width_columns=zero_width_columns,
         default_column_width=default_column_width,
+        default_row_hidden=default_row_hidden,
+        populated_row_visible_override=populated_row_visible_override,
+        shared_string_issue_ids=shared_string_issue_ids,
+        shared_string_index_override=shared_string_index_override,
         lose_leading_zero=lose_leading_zero,
     )
     summary_sheet_xml = _summary_sheet_xml(
@@ -268,6 +330,13 @@ def write_workbook(
         string_formula_caches=string_formula_caches,
         static_formula_cells=static_formula_cells,
     )
+    shared_strings_content_type = ""
+    shared_strings_relationship = ""
+    shared_strings_xml = None
+    if shared_string_issue_ids:
+        shared_strings_content_type = f'''\n  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'''
+        shared_strings_relationship = f'''\n  <Relationship Id="rId4" Type="{REL_NS}/sharedStrings" Target="sharedStrings.xml"/>'''
+        shared_strings_xml = _shared_strings_xml(shared_string_values)
     content_types = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="{CONTENT_TYPES_NS}">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -275,7 +344,7 @@ def write_workbook(
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
   <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
   <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
-  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>{shared_strings_content_type}
 </Types>'''.encode()
     package_relationships = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="{PACKAGE_REL_NS}">
@@ -285,7 +354,7 @@ def write_workbook(
 <Relationships xmlns="{PACKAGE_REL_NS}">
   <Relationship Id="rId1" Type="{REL_NS}/worksheet" Target="worksheets/sheet1.xml"/>
   <Relationship Id="rId2" Type="{REL_NS}/worksheet" Target="worksheets/sheet2.xml"/>
-  <Relationship Id="rId3" Type="{REL_NS}/styles" Target="styles.xml"/>
+  <Relationship Id="rId3" Type="{REL_NS}/styles" Target="styles.xml"/>{shared_strings_relationship}
 </Relationships>'''.encode()
     styles = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="{SPREADSHEET_NS}">
@@ -311,6 +380,8 @@ def write_workbook(
                 workbook.writestr("xl/workbook.xml", workbook_xml)
         workbook.writestr("xl/_rels/workbook.xml.rels", workbook_relationships)
         workbook.writestr("xl/styles.xml", styles)
+        if shared_strings_xml is not None:
+            workbook.writestr("xl/sharedStrings.xml", shared_strings_xml)
         workbook.writestr("xl/worksheets/sheet1.xml", issue_sheet_xml)
         if duplicate_issue_worksheet_part:
             with warnings.catch_warnings():
@@ -641,6 +712,79 @@ class ArtifactValidationCliTests(unittest.TestCase):
             [layer["status"] for layer in report["layers"].values()],
         )
 
+    def test_valid_shared_string_issue_ids_remain_partial(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "shared-string-issue-ids.xlsx"
+            write_workbook(artifact, shared_string_issue_ids=True)
+            with zipfile.ZipFile(artifact) as workbook:
+                names = set(workbook.namelist())
+                content_types = workbook.read("[Content_Types].xml")
+                relationships = workbook.read("xl/_rels/workbook.xml.rels")
+                issue_sheet = ET.fromstring(workbook.read("xl/worksheets/sheet1.xml"))
+            first_issue_id = issue_sheet.find(
+                f".//{{{SPREADSHEET_NS}}}c[@r='A2']",
+            )
+            self.assertIn("xl/sharedStrings.xml", names)
+            self.assertIn(b"sharedStrings.xml", content_types)
+            self.assertIn(b"sharedStrings", relationships)
+            self.assertIsNotNone(first_issue_id)
+            self.assertEqual("s", first_issue_id.get("t"))
+
+            result, report = self.run_validator(artifact)
+
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("PARTIAL", report["outcome"])
+        self.assertEqual(
+            ["PASS", "PASS", "PASS", "NOT RUN"],
+            [layer["status"] for layer in report["layers"].values()],
+        )
+
+    def test_negative_shared_string_index_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "negative-shared-string-index.xlsx"
+            write_workbook(
+                artifact,
+                shared_string_issue_ids=True,
+                shared_string_index_override=-1,
+            )
+
+            result, report = self.run_validator(artifact)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "validation_prerequisite",
+        )
+        self.assertNotIn("traceback", result.stderr.lower())
+        failure_details = json.dumps(failures, ensure_ascii=False).lower()
+        self.assertIn("shared string", failure_details)
+        self.assertIn("-1", failure_details)
+        self.assertIn("a2", failure_details)
+
+    def test_shared_string_index_equal_to_table_length_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "past-end-shared-string-index.xlsx"
+            write_workbook(
+                artifact,
+                shared_string_issue_ids=True,
+                shared_string_index_override=44,
+            )
+
+            result, report = self.run_validator(artifact)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "validation_prerequisite",
+        )
+        self.assertNotIn("traceback", result.stderr.lower())
+        failure_details = json.dumps(failures, ensure_ascii=False).lower()
+        self.assertIn("shared string", failure_details)
+        self.assertIn("44", failure_details)
+        self.assertIn("a2", failure_details)
+
     def test_workbook_internal_dtd_and_entity_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             artifact = Path(temporary_directory) / "workbook-with-internal-dtd.xlsx"
@@ -928,6 +1072,71 @@ class ArtifactValidationCliTests(unittest.TestCase):
             report,
             "visibility",
             "populated_issue_rows_visible",
+        )
+
+    def test_zero_height_sheet_default_does_not_hide_explicit_populated_rows(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "explicit-rows-with-zero-height-default.xlsx"
+            write_workbook(artifact, default_row_hidden=True)
+            with zipfile.ZipFile(artifact) as workbook:
+                issue_sheet = ET.fromstring(workbook.read("xl/worksheets/sheet1.xml"))
+            sheet_format = issue_sheet.find(f"{{{SPREADSHEET_NS}}}sheetFormatPr")
+            first_populated_row = issue_sheet.find(
+                f".//{{{SPREADSHEET_NS}}}row[@r='2']",
+            )
+            self.assertIsNotNone(sheet_format)
+            self.assertEqual("1", sheet_format.get("zeroHeight"))
+            self.assertIsNotNone(first_populated_row)
+            self.assertNotIn("hidden", first_populated_row.attrib)
+            self.assertNotIn("ht", first_populated_row.attrib)
+
+            result, report = self.run_validator(artifact)
+
+        self.assertEqual(
+            2,
+            result.returncode,
+            json.dumps(report, ensure_ascii=False, indent=2),
+        )
+        self.assertEqual("PARTIAL", report["outcome"])
+        self.assertEqual(
+            ["PASS", "PASS", "PASS", "NOT RUN"],
+            [layer["status"] for layer in report["layers"].values()],
+        )
+
+    def test_zero_height_sheet_default_with_hidden_false_rows_remains_partial(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "visible-hidden-false-rows.xlsx"
+            write_workbook(
+                artifact,
+                default_row_hidden=True,
+                populated_row_visible_override="hidden",
+            )
+
+            result, report = self.run_validator(artifact)
+
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("PARTIAL", report["outcome"])
+        self.assertEqual(
+            ["PASS", "PASS", "PASS", "NOT RUN"],
+            [layer["status"] for layer in report["layers"].values()],
+        )
+
+    def test_zero_height_sheet_default_with_positive_height_rows_remains_partial(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "visible-positive-height-rows.xlsx"
+            write_workbook(
+                artifact,
+                default_row_hidden=True,
+                populated_row_visible_override="height",
+            )
+
+            result, report = self.run_validator(artifact)
+
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertEqual("PARTIAL", report["outcome"])
+        self.assertEqual(
+            ["PASS", "PASS", "PASS", "NOT RUN"],
+            [layer["status"] for layer in report["layers"].values()],
         )
 
     def test_hidden_required_column_fails_visibility(self):

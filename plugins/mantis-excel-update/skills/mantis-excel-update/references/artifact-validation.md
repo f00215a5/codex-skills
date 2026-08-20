@@ -87,7 +87,7 @@ Validator 在有效呼叫時將 JSON report 寫到 stdout。Top-level keys 為�
 ## 四層範圍與安全邊界
 
 - `data_correctness`：用獨立 raw OOXML 讀取結果核對 CSV、確認欄位、`expected_issue_ids` 的完整問題單集合與顯示文字（含前導零）、狀態分類、預期統計與 source hashes。
-- `visibility`：核對工作表順序、摘要與作用中工作表是否可見、作用中儲存格的 `activeCell`/`sqref`、問題單工作表與標題列的可見性、所有 populated issue rows 的可見性與總數，以及每個 required column 存在、未隱藏且有效欄寬（含 `defaultColWidth`）大於零。
+- `visibility`：核對工作表順序、摘要與作用中工作表是否可見、作用中儲存格的 `activeCell`/`sqref`、問題單工作表、標題列與所有 populated issue rows 的有效可見性與總數，以及每個 required column 存在、未隱藏且有效欄寬（含 `defaultColWidth`）大於零。含標題或 issue cells 的 explicit `<row>` 在沒有 `hidden=true` 且有效列高大於零時可見；有 row-level `ht` 時以它為準，否則才使用已宣告的 `sheetFormatPr.defaultRowHeight`。`sheetFormatPr.zeroHeight` 只預設隱藏未寫出／unused rows，不會否定上述 explicit row 例外；contract 沒有可豁免 populated issue row 的例外。
 - `formula_cache`：核對 preflight 列出的公式都位於確認摘要工作表、公式文字與儲存快取；快取必須是 OOXML 數值型別，空白、錯誤、文字、非數字或過期快取都失敗。
 - `rendering`：`auto` 只使用現有 LibreOffice，將 artifact 複製到臨時目錄，使用隔離的臨時 profile 產生 PDF，並只驗證 PDF 檔案大小大於零。臨時副本與輸出會刪除，不回存原 artifact；`none` 則明示記錄 renderer 不可用。
 

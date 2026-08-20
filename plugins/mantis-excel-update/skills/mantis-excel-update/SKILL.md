@@ -54,7 +54,7 @@ description: Update a Mantis issue-tracking Excel workbook from an exported CSV 
 
 - 完整檢視工作簿的工作表、格式、公式、註解、篩選與隱藏狀態，再進行最小必要變更。
 - 「概要」可更新統計區與已確認的規則儲存格。
-- 「問題單清單」只可更新已確認資料列的對應欄位或新增列；不可重建、清空或全表重設樣式。保留既有篩選、隱藏列和檢視狀態。
+- 「問題單清單」只可更新已確認資料列的對應欄位或新增列；不可重建、清空或全表重設樣式。保留既有篩選與檢視狀態；既有 hidden 狀態只保留在非 populated issue rows。進入 post-save validator 前，所有 populated issue rows 必須有效可見：含 issue cells 的 explicit `<row>` 不得有 `hidden=true`，且有效列高必須大於零；有 row-level `ht` 時以它為準，否則才使用已宣告的 `sheetFormatPr.defaultRowHeight`。`sheetFormatPr.zeroHeight` 只預設隱藏未寫出／unused rows，不會使含 issue cells 的 explicit `<row>` 自動不可見。這是固定驗證契約，不可設定 contract 例外；任一 populated issue row 未達有效可見時，validator 必須回報 `visibility: FAIL`，而不是修補 artifact。
 - 待過版／過版調整工作表預設維持既有結構、版面、公式、格式、註解、篩選與檢視狀態；只有依「待過版工作表與 GitHub 版號」流程取得使用者確認後，才可最小化地更新問題單列及其已確認的版號欄位。
 - 使用者提供不同範本時，先確認對應的總表、問題單工作表及其餘保留工作表，再套用相同的最小變更原則。
 
