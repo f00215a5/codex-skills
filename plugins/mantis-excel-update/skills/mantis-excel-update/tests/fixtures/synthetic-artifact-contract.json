@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "mapping": {
+    "issues": {
+      "sheet": "Issues",
+      "header_row": 1,
+      "issue_id_column": "Issue ID",
+      "status_column": "Status",
+      "required_columns": [
+        "Issue ID",
+        "Status",
+        "Summary"
+      ]
+    },
+    "summary": {
+      "sheet": "Summary"
+    }
+  },
+  "csv": {
+    "path": "synthetic-mantis-issues-44.csv",
+    "issue_id_column": "Issue ID",
+    "status_column": "Status"
+  },
+  "status_groups": {
+    "in_progress": [
+      "IN_PROGRESS"
+    ],
+    "pending_release": [
+      "PENDING_RELEASE"
+    ],
+    "resolved": [
+      "RESOLVED"
+    ],
+    "unknown": []
+  },
+  "expected_statistics": {
+    "in_progress": 29,
+    "pending_release": 5,
+    "resolved": 10,
+    "unknown": 0,
+    "total": 44
+  },
+  "updated_range": {
+    "sheet": "Issues",
+    "range": "A2:C45"
+  },
+  "preflight_snapshot": {
+    "path": "synthetic-preflight-snapshot.json"
+  }
+}
