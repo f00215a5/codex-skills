@@ -7,7 +7,7 @@ description: Update a Mantis issue-tracking Excel workbook from an exported CSV 
 
 將最新的 Mantis CSV 套用到既有問題單 Excel。預設是「更新既有問題單」：相同問題單更新最新欄位，CSV 新出現的問題單新增列，不把每次 CSV 重新製成無歷史的新清單。
 
-使用 Spreadsheets skill 與其指定的 workbook authoring / verification 流程。處理開始前，先讀取 CSV、現有工作簿、相關欄位與格式；不要以 CSV 欄位名稱或工作表名稱猜測對應關係。
+依當下 runtime 可用的工具改寫「作用中工作簿副本」；Spreadsheets skill 可用時可依其 workbook authoring / verification 流程處理，但不是唯一 writer。無論實際使用何種工具，處理開始前都要讀取 CSV、現有工作簿、相關欄位與格式；不要以 CSV 欄位名稱或工作表名稱猜測對應關係。writer 的 API 回傳成功、記憶體 workbook model 或單純畫面預覽都不是交付證據；輸出後一律以本 skill 的獨立 raw OOXML validator 回讀 artifact，並依結果修正或回報限制。
 
 ## 範本與工作簿選擇
 
@@ -52,9 +52,11 @@ description: Update a Mantis issue-tracking Excel workbook from an exported CSV 
 
 ### 工作表保留範圍
 
-- 完整檢視工作簿的工作表、格式、公式、註解、篩選與隱藏狀態，再進行最小必要變更。
+- 完整檢視工作簿的工作表、格式、公式、註解、篩選與隱藏狀態，再進行最小必要變更。寫入前建立本次 preflight：記錄工作表順序、作用中工作表／儲存格、確認的欄位 mapping、完整 issue ID 集合、每一個摘要公式及其預期快取值、保留工作表與其應維持的內容；以此建立 validator 所需 contract 與 preflight snapshot。若使用者未授權「過版調整」更新，snapshot 的 `preservation` 必須以更新前作用中工作簿副本做為 `source_workbook`，將「過版調整」列為 `protected_sheets`，並啟用版本化規則備註保留。使用預設範本時，還要確認來源與輸出各有 20 筆去重後的 `MANTIS_RULE_V1` 規則。無法完整建立這些確認資料時，不得修改工作簿。
 - 「概要」可更新統計區與已確認的規則儲存格。
 - 「問題單清單」只可更新已確認資料列的對應欄位或新增列；不可重建、清空或全表重設樣式。保留既有篩選與檢視狀態；既有 hidden 狀態只保留在非 populated issue rows。進入 post-save validator 前，所有 populated issue rows 必須有效可見：含 issue cells 的 explicit `<row>` 不得有 `hidden=true`，且有效列高必須大於零；有 row-level `ht` 時以它為準，否則才使用已宣告的 `sheetFormatPr.defaultRowHeight`。`sheetFormatPr.zeroHeight` 只預設隱藏未寫出／unused rows，不會使含 issue cells 的 explicit `<row>` 自動不可見。這是固定驗證契約，不可設定 contract 例外；任一 populated issue row 未達有效可見時，validator 必須回報 `visibility: FAIL`，而不是修補 artifact。
+- 寫入後以當下工作表順序計算問題單工作表的 zero-based active tab；若 workbook view 或 sheet view 缺失則建立必要節點，將目標工作表設為 visible，並將其 `activeCell`、`sqref` 都設為 `A1`。目標外不可留下衝突的 `tabSelected`。如果既有 filter criteria 會遮住任何本次寫入問題單，只清除該 criteria、保留 filter range，並在交付回報記錄。這些是已確認目標可見性的 allowlist，不得藉此全表 unhide 或改動非目標工作表。
+- 每個已確認概要公式都要同時保留 `<f>` 與依本次獨立計數計算的 numeric cached value，包括前次／本次異動比例；只設定開檔重算旗標或把公式替換為靜態值均不可接受。若 workbook runtime 無法產生並回讀該快取，停止交付並回報公式快取驗證失敗。
 - 待過版／過版調整工作表預設維持既有結構、版面、公式、格式、註解、篩選與檢視狀態；只有依「待過版工作表與 GitHub 版號」流程取得使用者確認後，才可最小化地更新問題單列及其已確認的版號欄位。
 - 使用者提供不同範本時，先確認對應的總表、問題單工作表及其餘保留工作表，再套用相同的最小變更原則。
 
@@ -113,12 +115,14 @@ description: Update a Mantis issue-tracking Excel workbook from an exported CSV 
 輸出工作簿完成 export/save 後，先確認 workbook writer 的 handle 已釋放；只有 writer 位於獨立 process 時，才需等待該 process 結束。接著必須對已儲存的輸出路徑執行獨立 artifact 驗證；不得以 writer 記憶體中的 workbook 物件代替磁碟回讀：
 
 ```bash
-python3 scripts/validate_artifact.py "<artifact.xlsx>" --contract "<contract.json>" --renderer auto
+python3 scripts/validate_artifact.py "<artifact.xlsx>" --contract "<contract.json>" --renderer auto --visual-verdict not-run
 ```
 
 只有在要建立或檢視 contract，或要解讀 validator 的 report、outcome 與 exit code 時，才讀 [artifact 驗證契約與報告](references/artifact-validation.md)。
 
-完成前，依 Spreadsheets skill 檢查並渲染所有工作表，確認：
+資料正確性、可見性、公式快取三層一律由 raw OOXML validator 獨立驗證；這三層不依賴視覺化能力。若環境有 Spreadsheets 的工作簿檢視能力或其他可實際檢視輸出的 renderer，完成逐工作表視覺檢查後才可將同一份 artifact 以 `--visual-verdict pass` 重跑 validator。不得因為成功產出 PDF，或僅因為環境宣稱有 renderer，就填入 `pass`。無視覺化能力時保留 `not-run`，讓 validator 回傳 `PARTIAL`；這不是資料驗證失敗，也不是完整成功。
+
+完成前，依可用能力檢查並確認：
 
 - 每一筆 CSV 問題單都正確更新或新增，且既有不在 CSV 的問題單依確認規則轉為不明。
 - 問題單號沒有因數字格式而失去前導零；沒有未處理的重複鍵。
@@ -127,9 +131,10 @@ python3 scripts/validate_artifact.py "<artifact.xlsx>" --contract "<contract.jso
 - 當使用預設範本或使用者確認相同概要版面時，匯出後先檢查「概要」的浮動繪圖物件與其錨點。空白、白底黑框、覆蓋 A1:J6、且實際尺寸與錨點明顯不符的文字方塊是已知異常特徵；名稱為 Text Box 21 時尤其須排查。
 - 僅在確認該浮動物件不是使用者有意保留的內容、且符合上述異常特徵時，才以最小 OOXML 變更移除該圖形及其 drawing 關聯。不可藉此刪除其他圖形、圖表、圖片或註解物件。
 - 移除前後都要核對摘要 sheetData、公式與所有既有儲存格註解未變；預設範本輸出還要確認 20 筆版本化規則註解仍在。E3:H3 與 E9 的 12 pt 字級可作交叉檢核，但 styleId 重編本身不代表字型異常，也不得因此重設字型。
+- 若已確認 Text Box 21 是異常物件，將其名稱列入 preflight `preservation.forbidden_drawing_names`；唯讀 validator 必須在輸出所有 drawing parts 中確認它已不存在。不可只憑名稱推定未確認的使用者圖形可刪除。
 - 替位符號的可執行規則都已寫入備註，且其值與問題單清單一致。
 - 若使用者選擇更新待過版工作表，每個新填版號都有本次指定 Release／PR 的唯讀證據；無法對應者未被猜測填入，且已列入回報。
 
-完整驗證的完成條件是上述檢查均完成，且 validator `outcome` 為 `PASS`。`PARTIAL` 只表示資料正確性、可見性與公式快取通過，但真實渲染未執行；必須明示此限制，不得稱為完整成功。`FAIL` 時依 report 修正輸出流程，重新儲存、關閉 writer 後再驗證；validator 本身不修復工作簿。
+完整驗證的完成條件是上述檢查均完成，且 validator `outcome` 為 `PASS`。`PARTIAL` 表示資料正確性、可見性與公式快取均已通過獨立回讀，但 renderer 或視覺檢查未完成；必須明示此限制，不得稱為完整成功。`FAIL` 時依 report 修正輸出流程，重新儲存、關閉 writer 後再驗證；validator 本身不修復工作簿。
 
 交付時分開回報：新增問題單數、更新既有問題單數、缺單轉不明數，以及目前不明總數；不能把「缺單轉不明」併進一般更新數。若偵測到待過版問題單，也回報其數量、使用者是否選擇更新待過版工作表、寫入／新增的列數、成功填入的後端／前端版號數、待確認數，以及採用的 GitHub 資料來源或無法取得原因。若使用者沒有指定缺單規則，明確說明採用預設「不明」，並列出或附上受影響問題單的數量。
