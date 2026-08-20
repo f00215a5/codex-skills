@@ -54,7 +54,7 @@ description: Update a Mantis issue-tracking Excel workbook from an exported CSV 
 
 - 完整檢視工作簿的工作表、格式、公式、註解、篩選與隱藏狀態，再進行最小必要變更。
 - 「概要」可更新統計區與已確認的規則儲存格。
-- 「問題單清單」只可更新已確認資料列的對應欄位或新增列；不可重建、清空或全表重設樣式。保留既有篩選、隱藏列和檢視狀態。
+- 「問題單清單」只可更新已確認資料列的對應欄位或新增列；不可重建、清空或全表重設樣式。保留既有篩選與檢視狀態；既有 hidden 狀態只保留在非 populated issue rows。進入 post-save validator 前，所有 populated issue rows 必須有效可見：含 issue cells 的 explicit `<row>` 不得有 `hidden=true`，且有效列高必須大於零；有 row-level `ht` 時以它為準，否則才使用已宣告的 `sheetFormatPr.defaultRowHeight`。`sheetFormatPr.zeroHeight` 只預設隱藏未寫出／unused rows，不會使含 issue cells 的 explicit `<row>` 自動不可見。這是固定驗證契約，不可設定 contract 例外；任一 populated issue row 未達有效可見時，validator 必須回報 `visibility: FAIL`，而不是修補 artifact。
 - 待過版／過版調整工作表預設維持既有結構、版面、公式、格式、註解、篩選與檢視狀態；只有依「待過版工作表與 GitHub 版號」流程取得使用者確認後，才可最小化地更新問題單列及其已確認的版號欄位。
 - 使用者提供不同範本時，先確認對應的總表、問題單工作表及其餘保留工作表，再套用相同的最小變更原則。
 
@@ -110,6 +110,14 @@ description: Update a Mantis issue-tracking Excel workbook from an exported CSV 
 
 ## 驗證與完成回報
 
+輸出工作簿完成 export/save 後，先確認 workbook writer 的 handle 已釋放；只有 writer 位於獨立 process 時，才需等待該 process 結束。接著必須對已儲存的輸出路徑執行獨立 artifact 驗證；不得以 writer 記憶體中的 workbook 物件代替磁碟回讀：
+
+```bash
+python3 scripts/validate_artifact.py "<artifact.xlsx>" --contract "<contract.json>" --renderer auto
+```
+
+只有在要建立或檢視 contract，或要解讀 validator 的 report、outcome 與 exit code 時，才讀 [artifact 驗證契約與報告](references/artifact-validation.md)。
+
 完成前，依 Spreadsheets skill 檢查並渲染所有工作表，確認：
 
 - 每一筆 CSV 問題單都正確更新或新增，且既有不在 CSV 的問題單依確認規則轉為不明。
@@ -121,5 +129,7 @@ description: Update a Mantis issue-tracking Excel workbook from an exported CSV 
 - 移除前後都要核對摘要 sheetData、公式與所有既有儲存格註解未變；預設範本輸出還要確認 20 筆版本化規則註解仍在。E3:H3 與 E9 的 12 pt 字級可作交叉檢核，但 styleId 重編本身不代表字型異常，也不得因此重設字型。
 - 替位符號的可執行規則都已寫入備註，且其值與問題單清單一致。
 - 若使用者選擇更新待過版工作表，每個新填版號都有本次指定 Release／PR 的唯讀證據；無法對應者未被猜測填入，且已列入回報。
+
+完整驗證的完成條件是上述檢查均完成，且 validator `outcome` 為 `PASS`。`PARTIAL` 只表示資料正確性、可見性與公式快取通過，但真實渲染未執行；必須明示此限制，不得稱為完整成功。`FAIL` 時依 report 修正輸出流程，重新儲存、關閉 writer 後再驗證；validator 本身不修復工作簿。
 
 交付時分開回報：新增問題單數、更新既有問題單數、缺單轉不明數，以及目前不明總數；不能把「缺單轉不明」併進一般更新數。若偵測到待過版問題單，也回報其數量、使用者是否選擇更新待過版工作表、寫入／新增的列數、成功填入的後端／前端版號數、待確認數，以及採用的 GitHub 資料來源或無法取得原因。若使用者沒有指定缺單規則，明確說明採用預設「不明」，並列出或附上受影響問題單的數量。

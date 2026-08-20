@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "sheet_order": [
+    "Issues",
+    "Summary"
+  ],
+  "expected_issue_ids": [
+    "000001",
+    "000002",
+    "000003",
+    "000004",
+    "000005",
+    "000006",
+    "000007",
+    "000008",
+    "000009",
+    "000010",
+    "000011",
+    "000012",
+    "000013",
+    "000014",
+    "000015",
+    "000016",
+    "000017",
+    "000018",
+    "000019",
+    "000020",
+    "000021",
+    "000022",
+    "000023",
+    "000024",
+    "000025",
+    "000026",
+    "000027",
+    "000028",
+    "000029",
+    "000030",
+    "000031",
+    "000032",
+    "000033",
+    "000034",
+    "000035",
+    "000036",
+    "000037",
+    "000038",
+    "000039",
+    "000040",
+    "000041",
+    "000042",
+    "000043",
+    "000044"
+  ],
+  "expected_output_view": {
+    "active_sheet": "Summary",
+    "active_cell": "B2"
+  },
+  "formula_cells": {
+    "in_progress": {
+      "sheet": "Summary",
+      "cell": "B2",
+      "formula": "COUNTIF(Issues!$B$2:$B$45,\"IN_PROGRESS\")",
+      "statistic": "in_progress"
+    },
+    "pending_release": {
+      "sheet": "Summary",
+      "cell": "B3",
+      "formula": "COUNTIF(Issues!$B$2:$B$45,\"PENDING_RELEASE\")",
+      "statistic": "pending_release"
+    },
+    "resolved": {
+      "sheet": "Summary",
+      "cell": "B4",
+      "formula": "COUNTIF(Issues!$B$2:$B$45,\"RESOLVED\")",
+      "statistic": "resolved"
+    },
+    "unknown": {
+      "sheet": "Summary",
+      "cell": "B5",
+      "formula": "COUNTBLANK(Issues!$B$2:$B$45)",
+      "statistic": "unknown"
+    },
+    "total": {
+      "sheet": "Summary",
+      "cell": "B6",
+      "formula": "COUNTA(Issues!$A$2:$A$45)",
+      "statistic": "total"
+    }
+  },
+  "source_artifacts": [
+    {
+      "path": "synthetic-mantis-issues-44.csv",
+      "sha256": "61fd4175b1d222769a5ba0f71b0e57471e2eefa3f5588f22905ac57528e8120b"
+    }
+  ]
+}
