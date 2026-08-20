@@ -48,6 +48,7 @@ Preflight snapshot 也必須是單一 JSON object，`schema_version` 為 `1`，�
 | `sheet_order` | 非空白、不重複的工作表名稱 array，順序必須與預期輸出一致。 |
 | `expected_output_view.active_sheet` | 預期交付時的作用中工作表。 |
 | `expected_output_view.active_cell` | 該工作表預期選取的有效 A1 儲存格。 |
+| `expected_issue_ids` | 預期輸出中的完整問題單號字串 array，包含 CSV 問題單與必須保留的既有非 CSV 問題單；不得空白、正規化後不得重複，筆數必須等於 `expected_statistics.total`。驗證會精確核對完整集合與顯示文字，因此前導零也是契約的一部分。 |
 | `formula_cells` | 非空 object；每個命名 entry 包含 `sheet`, `cell`, `formula`, `statistic`。`cell` 是有效 A1 儲存格，`formula` 除了可選的開頭 `=` 外，必須與 persisted OOXML `<f>` 文字一致；`statistic` 必須指向 contract 的一個 `expected_statistics` key。要通過驗證，五個 statistics 必須各出現一次，儲存格座標也不得重複。 |
 | `source_artifacts` | 非空 array；每個 entry 包含 `path` 與 64 個十六進位字元的 `sha256`。至少必須以解析後的同一路徑及 digest pin 住 contract 的 `csv.path`；也列出本次需確認未被 validator 改動的其他來源／seed artifact。 |
 
@@ -85,14 +86,14 @@ Validator 在有效呼叫時將 JSON report 寫到 stdout。Top-level keys 為�
 
 ## 四層範圍與安全邊界
 
-- `data_correctness`：用獨立 raw OOXML 讀取結果核對 CSV、確認欄位、問題單號（含前導零）、狀態分類、預期統計與 source hashes。
+- `data_correctness`：用獨立 raw OOXML 讀取結果核對 CSV、確認欄位、`expected_issue_ids` 的完整問題單集合與顯示文字（含前導零）、狀態分類、預期統計與 source hashes。
 - `visibility`：核對工作表順序、摘要與作用中工作表是否可見、作用中儲存格的 `activeCell`/`sqref`、問題單工作表與標題列的可見性、所有 populated issue rows 的可見性與總數，以及每個 required column 存在、未隱藏且有效欄寬（含 `defaultColWidth`）大於零。
 - `formula_cache`：核對 preflight 列出的公式都位於確認摘要工作表、公式文字與儲存快取；快取必須是 OOXML 數值型別，空白、錯誤、文字、非數字或過期快取都失敗。
 - `rendering`：`auto` 只使用現有 LibreOffice，將 artifact 複製到臨時目錄，使用隔離的臨時 profile 產生 PDF，並只驗證 PDF 檔案大小大於零。臨時副本與輸出會刪除，不回存原 artifact；`none` 則明示記錄 renderer 不可用。
 
 Validator 是唯讀驗證器：不建立 workbook writer，不修復或改寫 hidden/view/formula/cache，也不修改來源檔、seed 或待驗證 artifact。需修正時，回到 workbook authoring 流程完成修正與 save/close，再對新的 persisted artifact 重跑。
 
-Raw OOXML reader 會在 XML parse 前拒絕 DTD／entity 宣告，並限制 ZIP entry 數、總解壓縮大小與單一 XML part 大小；驗收 artifact 不得依賴 DTD 或 entity expansion。
+Raw OOXML reader 會在讀取任何 part 前拒絕重複的 ZIP entry 名稱，並限制 ZIP entry 數與總解壓縮大小。每個 XML part 會先依 ZIP metadata 檢查大小，再以 bounded stream 讀取，最後才解析；parse 前仍會拒絕 DTD／entity 宣告。驗收 artifact 不得依賴重複 OOXML part、DTD 或 entity expansion。
 
 待驗證 artifact 路徑必須與 `source_artifacts` 中每個來源／seed 路徑不同；同一路徑會使 `data_correctness` 失敗。
 

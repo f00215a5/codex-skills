@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
+import warnings
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -41,6 +42,7 @@ FORMULAS = {
     "unknown": ("B5", "COUNTBLANK(Issues!$B$2:$B$45)", 0),
     "total": ("B6", "COUNTA(Issues!$A$2:$A$45)", 44),
 }
+MEBIBYTE = 1024 * 1024
 
 
 def _qualified(namespace: str, name: str) -> str:
@@ -208,6 +210,22 @@ def _workbook_xml(*, include_workbook_view: bool, include_internal_dtd: bool) ->
     return workbook_xml.replace(b"DTD_ENTITY_REFERENCE_SENTINEL", b"&level4;")
 
 
+def _write_streaming_xml_part(
+    workbook: zipfile.ZipFile,
+    part_name: str,
+    payload_bytes: int,
+) -> None:
+    chunk = b"x" * MEBIBYTE
+    with workbook.open(part_name, "w", force_zip64=True) as xml_part:
+        xml_part.write(b'<?xml version="1.0" encoding="UTF-8"?><oversized>')
+        remaining = payload_bytes
+        while remaining:
+            size = min(remaining, len(chunk))
+            xml_part.write(chunk[:size])
+            remaining -= size
+        xml_part.write(b"</oversized>")
+
+
 def write_workbook(
     path: Path,
     *,
@@ -218,6 +236,9 @@ def write_workbook(
     include_workbook_view: bool = True,
     include_workbook_internal_dtd: bool = False,
     include_summary_sheet_view: bool = True,
+    duplicate_workbook_part: bool = False,
+    duplicate_issue_worksheet_part: bool = False,
+    oversized_xml_payload_bytes: int | None = None,
     formula_cache_overrides: dict[str, object] | None = None,
     string_formula_caches: set[str] | None = None,
     static_formula_cells: set[str] | None = None,
@@ -229,6 +250,23 @@ def write_workbook(
     formula_cache_overrides = formula_cache_overrides or {}
     string_formula_caches = string_formula_caches or set()
     static_formula_cells = static_formula_cells or set()
+    workbook_xml = _workbook_xml(
+        include_workbook_view=include_workbook_view,
+        include_internal_dtd=include_workbook_internal_dtd,
+    )
+    issue_sheet_xml = _issues_sheet_xml(
+        hidden_rows=hidden_rows,
+        hidden_columns=hidden_columns,
+        zero_width_columns=zero_width_columns,
+        default_column_width=default_column_width,
+        lose_leading_zero=lose_leading_zero,
+    )
+    summary_sheet_xml = _summary_sheet_xml(
+        include_sheet_view=include_summary_sheet_view,
+        formula_cache_overrides=formula_cache_overrides,
+        string_formula_caches=string_formula_caches,
+        static_formula_cells=static_formula_cells,
+    )
     content_types = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="{CONTENT_TYPES_NS}">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -265,34 +303,25 @@ def write_workbook(
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as workbook:
         workbook.writestr("[Content_Types].xml", content_types)
         workbook.writestr("_rels/.rels", package_relationships)
-        workbook.writestr(
-            "xl/workbook.xml",
-            _workbook_xml(
-                include_workbook_view=include_workbook_view,
-                include_internal_dtd=include_workbook_internal_dtd,
-            ),
-        )
+        workbook.writestr("xl/workbook.xml", workbook_xml)
+        if duplicate_workbook_part:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                workbook.writestr("xl/workbook.xml", workbook_xml)
         workbook.writestr("xl/_rels/workbook.xml.rels", workbook_relationships)
         workbook.writestr("xl/styles.xml", styles)
-        workbook.writestr(
-            "xl/worksheets/sheet1.xml",
-            _issues_sheet_xml(
-                hidden_rows=hidden_rows,
-                hidden_columns=hidden_columns,
-                zero_width_columns=zero_width_columns,
-                default_column_width=default_column_width,
-                lose_leading_zero=lose_leading_zero,
-            ),
-        )
-        workbook.writestr(
-            "xl/worksheets/sheet2.xml",
-            _summary_sheet_xml(
-                include_sheet_view=include_summary_sheet_view,
-                formula_cache_overrides=formula_cache_overrides,
-                string_formula_caches=string_formula_caches,
-                static_formula_cells=static_formula_cells,
-            ),
-        )
+        workbook.writestr("xl/worksheets/sheet1.xml", issue_sheet_xml)
+        if duplicate_issue_worksheet_part:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                workbook.writestr("xl/worksheets/sheet1.xml", issue_sheet_xml)
+        workbook.writestr("xl/worksheets/sheet2.xml", summary_sheet_xml)
+        if oversized_xml_payload_bytes is not None:
+            _write_streaming_xml_part(
+                workbook,
+                "xl/oversized.xml",
+                oversized_xml_payload_bytes,
+            )
 
 
 def write_fake_libreoffice(
@@ -426,6 +455,25 @@ def write_contract_with_formula_text(
     contract["csv"]["path"] = str(CSV_FIXTURE)
     contract["preflight_snapshot"]["path"] = str(preflight_path)
     contract_path = directory / "formula-text-contract.json"
+    contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
+    return contract_path
+
+
+def write_contract_with_expected_issue_ids(
+    directory: Path,
+    expected_issue_ids: list[str],
+) -> Path:
+    preflight = json.loads(PREFLIGHT_FIXTURE.read_text(encoding="utf-8"))
+    preflight["expected_issue_ids"] = expected_issue_ids
+    for source in preflight["source_artifacts"]:
+        source["path"] = str((PREFLIGHT_FIXTURE.parent / source["path"]).resolve())
+    preflight_path = directory / "expected-issue-ids-preflight.json"
+    preflight_path.write_text(json.dumps(preflight, indent=2) + "\n", encoding="utf-8")
+
+    contract = json.loads(CONTRACT_FIXTURE.read_text(encoding="utf-8"))
+    contract["csv"]["path"] = str(CSV_FIXTURE)
+    contract["preflight_snapshot"]["path"] = str(preflight_path)
+    contract_path = directory / "expected-issue-ids-contract.json"
     contract_path.write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
     return contract_path
 
@@ -569,6 +617,68 @@ class ArtifactValidationCliTests(unittest.TestCase):
         self.assertIn("dtd", rejection)
         self.assertIn("entity", rejection)
         self.assertRegex(rejection, r"not allowed|forbidden|prohibit|不允許|禁止")
+
+    def test_duplicate_workbook_part_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "duplicate-workbook-part.xlsx"
+            write_workbook(artifact, duplicate_workbook_part=True)
+
+            result, report = self.run_validator(artifact)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "validation_prerequisite",
+        )
+        failure_details = json.dumps(failures, ensure_ascii=False).lower()
+        self.assertIn("duplicate", failure_details)
+        self.assertIn("xl/workbook.xml", failure_details)
+
+    def test_duplicate_issue_worksheet_part_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "duplicate-worksheet-part.xlsx"
+            write_workbook(artifact, duplicate_issue_worksheet_part=True)
+
+            result, report = self.run_validator(artifact)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "validation_prerequisite",
+        )
+        failure_details = json.dumps(failures, ensure_ascii=False).lower()
+        self.assertIn("duplicate", failure_details)
+        self.assertIn("xl/worksheets/sheet1.xml", failure_details)
+
+    def test_highly_compressed_xml_over_uncompressed_limit_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "oversized-compressed-xml-part.xlsx"
+            write_workbook(
+                artifact,
+                oversized_xml_payload_bytes=64 * MEBIBYTE + 1,
+            )
+            with zipfile.ZipFile(artifact) as workbook:
+                oversized = workbook.getinfo("xl/oversized.xml")
+            self.assertGreater(oversized.file_size, 64 * MEBIBYTE)
+            self.assertLess(oversized.compress_size, MEBIBYTE)
+
+            started = time.monotonic()
+            result, report = self.run_validator(artifact, timeout_seconds=10)
+            elapsed = time.monotonic() - started
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "validation_prerequisite",
+        )
+        self.assertLess(elapsed, 10)
+        self.assertIn(
+            "xl/oversized.xml",
+            json.dumps(failures, ensure_ascii=False),
+        )
 
     def test_nonexistent_confirmed_summary_sheet_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -871,6 +981,27 @@ class ArtifactValidationCliTests(unittest.TestCase):
             "issue_id_display_and_type",
         )
 
+    def test_legacy_issue_id_in_expected_complete_set_fails_data_correctness(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            artifact = directory / "legacy-expected-issue-id.xlsx"
+            write_workbook(artifact)
+            expected_issue_ids = [f"{issue_id:06d}" for issue_id in range(1, 45)]
+            expected_issue_ids[-1] = "000999"
+            contract = write_contract_with_expected_issue_ids(directory, expected_issue_ids)
+
+            result, report = self.run_validator(artifact, contract=contract)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "complete_issue_id_set",
+        )
+        failure_details = json.dumps(failures, ensure_ascii=False)
+        self.assertIn("000044", failure_details)
+        self.assertIn("000999", failure_details)
+
     def test_validation_does_not_modify_source_seed_or_pending_artifact(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
@@ -891,6 +1022,52 @@ class ArtifactValidationCliTests(unittest.TestCase):
         self.assertEqual(2, result.returncode, result.stderr)
         self.assertEqual("PARTIAL", report["outcome"])
         self.assertEqual(hashes_before, hashes_after)
+
+    def test_changed_source_csv_digest_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source_csv = directory / "source-issues.csv"
+            shutil.copyfile(CSV_FIXTURE, source_csv)
+            seed_workbook = directory / "seed.xlsx"
+            write_workbook(seed_workbook)
+            pending_artifact = directory / "pending-validation.xlsx"
+            write_workbook(pending_artifact)
+            contract = write_runtime_contract(directory, source_csv, seed_workbook)
+            with source_csv.open("ab") as source:
+                source.write(b"\n")
+
+            result, report = self.run_validator(pending_artifact, contract=contract)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "source_artifact_digest",
+        )
+        self.assertIn(source_csv.name, json.dumps(failures, ensure_ascii=False))
+
+    def test_changed_seed_digest_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source_csv = directory / "source-issues.csv"
+            shutil.copyfile(CSV_FIXTURE, source_csv)
+            seed_workbook = directory / "seed.xlsx"
+            write_workbook(seed_workbook)
+            pending_artifact = directory / "pending-validation.xlsx"
+            write_workbook(pending_artifact)
+            contract = write_runtime_contract(directory, source_csv, seed_workbook)
+            with seed_workbook.open("ab") as seed:
+                seed.write(b"\x00")
+
+            result, report = self.run_validator(pending_artifact, contract=contract)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "source_artifact_digest",
+        )
+        self.assertIn(seed_workbook.name, json.dumps(failures, ensure_ascii=False))
 
 
 if __name__ == "__main__":

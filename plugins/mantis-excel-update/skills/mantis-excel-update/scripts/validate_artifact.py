@@ -341,6 +341,21 @@ def parse_xml(data: bytes, source: str) -> ET.Element:
         raise ValidationInputError(f"invalid XML in {source}: {error}") from error
 
 
+def ensure_xml_part_size(information: zipfile.ZipInfo) -> None:
+    if information.file_size > MAX_XML_BYTES:
+        raise ValidationInputError(
+            f"XML part exceeds {MAX_XML_BYTES} bytes: {information.filename}"
+        )
+
+
+def read_xml_part(archive: zipfile.ZipFile, part_name: str) -> ET.Element:
+    information = archive.getinfo(part_name)
+    ensure_xml_part_size(information)
+    with archive.open(information, "r") as stream:
+        data = stream.read(MAX_XML_BYTES + 1)
+    return parse_xml(data, part_name)
+
+
 def resolve_relationship_target(base_part: str, target: str) -> str:
     if not target or ":" in target.split("/", 1)[0]:
         raise ValidationInputError(f"unsupported relationship target: {target!r}")
@@ -358,7 +373,7 @@ def read_shared_strings(archive: zipfile.ZipFile, names: set[str]) -> list[str]:
     part = "xl/sharedStrings.xml"
     if part not in names:
         return []
-    root = parse_xml(archive.read(part), part)
+    root = read_xml_part(archive, part)
     return [
         "".join(text.text or "" for text in item.iter(spreadsheet_tag("t")))
         for item in root.findall(spreadsheet_tag("si"))
@@ -394,7 +409,7 @@ def read_sheet(
     part_name: str,
     shared_strings: Sequence[str],
 ) -> Sheet:
-    root = parse_xml(archive.read(part_name), part_name)
+    root = read_xml_part(archive, part_name)
     cells: dict[str, Cell] = {}
     rows: dict[int, ET.Element] = {}
     sheet_data = root.find(spreadsheet_tag("sheetData"))
@@ -444,7 +459,18 @@ def read_workbook_artifact(path: Path) -> WorkbookArtifact:
                 raise ValidationInputError(
                     f"OOXML package is too large after decompression: {total_size} bytes"
                 )
-            names = {item.filename for item in information}
+            filenames = [item.filename for item in information]
+            duplicate_names = sorted(
+                name for name, count in Counter(filenames).items() if count > 1
+            )
+            if duplicate_names:
+                raise ValidationInputError(
+                    f"OOXML package contains duplicate part names: {duplicate_names}"
+                )
+            for item in information:
+                if item.filename.lower().endswith((".xml", ".rels")):
+                    ensure_xml_part_size(item)
+            names = set(filenames)
             required = {
                 "[Content_Types].xml",
                 "_rels/.rels",
@@ -456,11 +482,8 @@ def read_workbook_artifact(path: Path) -> WorkbookArtifact:
                 raise ValidationInputError(f"OOXML package is missing required parts: {missing}")
 
             workbook_part = "xl/workbook.xml"
-            workbook_root = parse_xml(archive.read(workbook_part), workbook_part)
-            relationships_root = parse_xml(
-                archive.read("xl/_rels/workbook.xml.rels"),
-                "xl/_rels/workbook.xml.rels",
-            )
+            workbook_root = read_xml_part(archive, workbook_part)
+            relationships_root = read_xml_part(archive, "xl/_rels/workbook.xml.rels")
             relationship_targets: dict[str, str] = {}
             for relationship in relationships_root.findall(qualified(PACKAGE_REL_NS, "Relationship")):
                 if relationship.get("TargetMode") == "External":
@@ -598,6 +621,7 @@ class LoadedInputs:
     summary_mapping: dict[str, Any]
     status_groups: dict[str, list[str]]
     expected_statistics: dict[str, int]
+    expected_issue_ids: list[str]
     updated_range: CellRange
 
 
@@ -700,6 +724,37 @@ def load_inputs(artifact: Path, contract_path: Path) -> LoadedInputs:
         require_string(preflight_config, "path", "contract.preflight_snapshot"),
     )
     preflight = load_json_object(preflight_path, "preflight snapshot")
+    raw_expected_issue_ids = preflight.get("expected_issue_ids")
+    if (
+        not isinstance(raw_expected_issue_ids, list)
+        or not raw_expected_issue_ids
+        or any(
+            not isinstance(item, str) or not item.strip()
+            for item in raw_expected_issue_ids
+        )
+    ):
+        raise ValidationInputError(
+            "preflight.expected_issue_ids must be a non-empty string array"
+        )
+    expected_issue_ids = list(raw_expected_issue_ids)
+    normalized_expected_issue_ids = [
+        normalize_issue_id(issue_id) for issue_id in expected_issue_ids
+    ]
+    duplicate_expected_issue_ids = sorted(
+        key
+        for key, count in Counter(normalized_expected_issue_ids).items()
+        if count > 1
+    )
+    if duplicate_expected_issue_ids:
+        raise ValidationInputError(
+            "preflight.expected_issue_ids must be unique after normalization: "
+            f"{duplicate_expected_issue_ids}"
+        )
+    if len(expected_issue_ids) != expected_statistics["total"]:
+        raise ValidationInputError(
+            "preflight.expected_issue_ids length must equal "
+            "contract.expected_statistics.total"
+        )
     sheet_order = preflight.get("sheet_order")
     if (
         not isinstance(sheet_order, list)
@@ -769,6 +824,7 @@ def load_inputs(artifact: Path, contract_path: Path) -> LoadedInputs:
         summary_mapping=summary_mapping,
         status_groups=status_groups,
         expected_statistics=expected_statistics,
+        expected_issue_ids=expected_issue_ids,
         updated_range=updated_range,
     )
 
@@ -942,6 +998,44 @@ def validate_data(
         expected="unique normalized issue identifiers",
         actual={"duplicates": sorted(set(duplicate_artifact_keys))},
         reason="artifact contains duplicate normalized issue identifiers",
+    )
+
+    expected_issue_ids_by_key = {
+        normalize_issue_id(issue_id): issue_id for issue_id in inputs.expected_issue_ids
+    }
+    complete_missing_ids = [
+        issue_id
+        for key, issue_id in expected_issue_ids_by_key.items()
+        if key not in actual_pairs
+    ]
+    complete_extra_ids = [
+        issue_cell.value
+        for key, (issue_cell, _) in actual_pairs.items()
+        if key not in expected_issue_ids_by_key
+    ]
+    complete_display_mismatches = [
+        {
+            "expected": expected_issue_id,
+            "actual": actual_pairs[key][0].value,
+            "cell": actual_pairs[key][0].reference,
+        }
+        for key, expected_issue_id in expected_issue_ids_by_key.items()
+        if key in actual_pairs and actual_pairs[key][0].value != expected_issue_id
+    ]
+    layer.check(
+        "complete_issue_id_set",
+        not complete_missing_ids
+        and not complete_extra_ids
+        and not complete_display_mismatches,
+        source=f"{inputs.preflight_path} -> {inputs.artifact}:{issue_sheet.name}",
+        expected={"count": len(inputs.expected_issue_ids), "issue_ids": inputs.expected_issue_ids},
+        actual={
+            "count": len(actual_pairs),
+            "missing": complete_missing_ids,
+            "extra": complete_extra_ids,
+            "display_mismatches": complete_display_mismatches,
+        },
+        reason="artifact issue identifiers do not exactly match the preflight snapshot",
     )
 
     missing_ids: list[str] = []
