@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -322,6 +323,55 @@ def write_workbook(
                 "xl/oversized.xml",
                 oversized_xml_payload_bytes,
             )
+
+
+def _patch_zip_member_metadata(
+    path: Path,
+    member_name: str,
+    *,
+    encrypted: bool = False,
+    compression_method: int | None = None,
+) -> None:
+    archive = bytearray(path.read_bytes())
+    end_record = archive.rfind(b"PK\x05\x06")
+    if end_record < 0:
+        raise AssertionError("synthetic ZIP has no end-of-central-directory record")
+
+    entry_count = struct.unpack_from("<H", archive, end_record + 10)[0]
+    central_offset = struct.unpack_from("<I", archive, end_record + 16)[0]
+    member_bytes = member_name.encode("utf-8")
+    cursor = central_offset
+    found = False
+
+    for _ in range(entry_count):
+        if archive[cursor : cursor + 4] != b"PK\x01\x02":
+            raise AssertionError("synthetic ZIP has an invalid central-directory record")
+        name_length, extra_length, comment_length = struct.unpack_from(
+            "<HHH",
+            archive,
+            cursor + 28,
+        )
+        name_start = cursor + 46
+        name_end = name_start + name_length
+        if archive[name_start:name_end] == member_bytes:
+            local_offset = struct.unpack_from("<I", archive, cursor + 42)[0]
+            if archive[local_offset : local_offset + 4] != b"PK\x03\x04":
+                raise AssertionError("synthetic ZIP has an invalid local-file header")
+            if encrypted:
+                central_flags = struct.unpack_from("<H", archive, cursor + 8)[0]
+                local_flags = struct.unpack_from("<H", archive, local_offset + 6)[0]
+                struct.pack_into("<H", archive, cursor + 8, central_flags | 0x0001)
+                struct.pack_into("<H", archive, local_offset + 6, local_flags | 0x0001)
+            if compression_method is not None:
+                struct.pack_into("<H", archive, cursor + 10, compression_method)
+                struct.pack_into("<H", archive, local_offset + 8, compression_method)
+            found = True
+            break
+        cursor = name_end + extra_length + comment_length
+
+    if not found:
+        raise AssertionError(f"synthetic ZIP member not found: {member_name}")
+    path.write_bytes(archive)
 
 
 def write_fake_libreoffice(
@@ -651,6 +701,59 @@ class ArtifactValidationCliTests(unittest.TestCase):
         failure_details = json.dumps(failures, ensure_ascii=False).lower()
         self.assertIn("duplicate", failure_details)
         self.assertIn("xl/worksheets/sheet1.xml", failure_details)
+
+    def test_encrypted_required_workbook_part_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "encrypted-workbook-part.xlsx"
+            write_workbook(artifact)
+            _patch_zip_member_metadata(
+                artifact,
+                "xl/workbook.xml",
+                encrypted=True,
+            )
+            with zipfile.ZipFile(artifact) as workbook:
+                workbook_part = workbook.getinfo("xl/workbook.xml")
+            self.assertTrue(workbook_part.flag_bits & 0x0001)
+
+            result, report = self.run_validator(artifact)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "validation_prerequisite",
+        )
+        self.assertNotIn("traceback", result.stderr.lower())
+        failure_details = json.dumps(failures, ensure_ascii=False).lower()
+        self.assertIn("encrypted", failure_details)
+        self.assertIn("xl/workbook.xml", failure_details)
+
+    def test_unsupported_compression_on_required_workbook_part_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            artifact = Path(temporary_directory) / "unsupported-compression-workbook-part.xlsx"
+            write_workbook(artifact)
+            _patch_zip_member_metadata(
+                artifact,
+                "xl/workbook.xml",
+                compression_method=99,
+            )
+            with zipfile.ZipFile(artifact) as workbook:
+                workbook_part = workbook.getinfo("xl/workbook.xml")
+            self.assertEqual(99, workbook_part.compress_type)
+
+            result, report = self.run_validator(artifact)
+
+        failures = self.assert_layer_failure(
+            result,
+            report,
+            "data_correctness",
+            "validation_prerequisite",
+        )
+        self.assertNotIn("traceback", result.stderr.lower())
+        failure_details = json.dumps(failures, ensure_ascii=False).lower()
+        self.assertIn("compression", failure_details)
+        self.assertIn("unsupported", failure_details)
+        self.assertIn("xl/workbook.xml", failure_details)
 
     def test_highly_compressed_xml_over_uncompressed_limit_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

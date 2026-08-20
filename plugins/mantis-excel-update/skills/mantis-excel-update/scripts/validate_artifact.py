@@ -351,8 +351,11 @@ def ensure_xml_part_size(information: zipfile.ZipInfo) -> None:
 def read_xml_part(archive: zipfile.ZipFile, part_name: str) -> ET.Element:
     information = archive.getinfo(part_name)
     ensure_xml_part_size(information)
-    with archive.open(information, "r") as stream:
-        data = stream.read(MAX_XML_BYTES + 1)
+    try:
+        with archive.open(information, "r") as stream:
+            data = stream.read(MAX_XML_BYTES + 1)
+    except RuntimeError as error:
+        raise ValidationInputError(f"cannot read OOXML part {part_name}: {error}") from error
     return parse_xml(data, part_name)
 
 
