@@ -7,6 +7,14 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 建立可操作、可驗證的系統 UI 說明書。先確認畫面範圍與預設模板；用實機和來源證據描述畫面，而不是猜測控制項或後續影響。
 
+## 產製路由與必要 gate
+
+依序完成「範圍確認 → 證據與隱碼 → 文件建置 → renderer／版面 QA → 獨立交付審核」。每一關留下可追溯結果；各模型可調整內容分段與版面細節，但不能跳過證據、隱碼、渲染或審核關卡。詳細規則按需閱讀：
+
+- 擷取或處理畫面前，閱讀 [references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md)。實際系統截圖是預設；示意／重繪 UI 只有在使用者明示時才可使用。身分 ID、地址、保單號、帳單號、合約號等預設遮蔽；金額預設保留。
+- 開始排版或套用參照文件前，閱讀 [references/default-document-layout.md](references/default-document-layout.md) 與 [references/visual-consistency-standard.md](references/visual-consistency-standard.md)。plugin 規範決定文件結構；參照文件只提供可重用的視覺標準。表格以容器可用內容區為基準置中，寬高可依內容調整。
+- 準備交付前，閱讀 [references/independent-delivery-review.md](references/independent-delivery-review.md)。reviewer 直接讀取需求、成品與原始證據，不採信 builder 的 `verified`；無獨立 reviewer 時明確標記 `independent review pending`，可繼續其他工作，檔名、資料夾或交付對話只能將產物標示 `draft`。
+
 ## 新任務第一輪回覆（強制）
 
 對**每一個新建或修訂** UI 操作說明書的任務，無論使用者資訊看似是否完整，第一輪回覆都**必須先**輸出下列「預設範圍確認」表單，並明確要求使用者確認或改寫。不可只在資訊不足時才詢問；不可先開始擷取、登入、寫入系統或建立交付檔。
@@ -103,9 +111,9 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 **各操作小節獨立**使用真正的 Word 編號清單，並從**步驟 1**開始；不要讓新章節延續成「步驟 25」。圖說的紅框編號要與同張圖的標註一致，不要把圖號當成操作步驟號。
 
-截圖先取原始證據，再產生標註副本。每個需互動的紅框應緊貼目標控制項，不遮蔽文字；圖說寫明紅框編號、控制項名稱與用途。若同一畫面有多個動作，使用較少但可讀的截圖，不要用一張過度標註的全景圖取代流程。
+先依 [references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md) 判定來源與隱碼範圍，再取原始證據並產生 redacted／標註副本。操作截圖預設保留實際系統畫面；除非使用者明示，不得用重繪或生成 UI 取代它。身分 ID、地址、保單號、帳單號、合約號等識別資訊精準遮蔽，金額依預設保留。每個需互動的紅框應緊貼目標控制項，不遮蔽文字；圖說寫明紅框編號、控制項名稱與用途。若同一畫面有多個動作，使用較少但可讀的截圖，不要用一張過度標註的全景圖取代流程。
 
-對任何紅框或游標標註，先閱讀 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md)。以 manifest 管理每個控制項和 caption；在 DOCX 建置前完成標註語意檢核。不要把 Word 的最終渲染當成紅框位置正確的證明。
+對任何紅框或游標標註，先閱讀 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md)。以 manifest 管理每個控制項、redaction 和 caption；在 DOCX 建置前完成標註語意檢核。不要把 Word 的最終渲染當成紅框位置正確的證明。
 
 ## 操作圖表（條件式）
 
@@ -117,9 +125,9 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 ## 文件結構與版面
 
-製作 DOCX 時使用 `documents` 技能，並在開始排版前閱讀 [references/default-document-layout.md](references/default-document-layout.md)。它是通用的 v1.3 視覺與結構基線，不攜帶任何特定系統名稱、畫面或資料。
+製作 DOCX 時使用 `documents` 技能，並在開始排版前閱讀 [references/default-document-layout.md](references/default-document-layout.md) 與 [references/visual-consistency-standard.md](references/visual-consistency-standard.md)。plugin 規範決定文件結構；預設基線或既有參照文件只提供可重用的視覺標準，不攜帶任何特定系統名稱、畫面或資料。
 
-文件順序固定為：
+文件順序預設如下；使用者在範圍確認中明示調整時依確認結果執行：
 
 1. 標題區塊：標題、副標題、適用畫面。
 2. **更新紀錄**：標題區塊正下方的單一表格，集中列出所有版本；不要將更新紀錄散落在各章。
@@ -128,19 +136,21 @@ description: Use when creating or revising a system UI 操作說明書, user man
 5. 使用提醒與共通操作規則。
 6. 一個目標功能一章：入口、前置條件、操作流程、UI 說明、成功影響、檢核。
 
-既有 DOCX 修訂必須先建立新版本副本；保留前版和不在範圍內的內容。沿用既有版面，除非使用者要求改版。
+既有 DOCX 修訂必須先建立新版本副本；保留前版和不在範圍內的內容。沿用既有視覺版面，除非使用者要求改版；章節順序與必要內容仍依目前 plugin 規範，不能因參照文件的舊結構而改變。
 
 使用者要求**修正預設**（範圍、章節、截圖規格、版面或基線）時，先在任務工作區以目前基線**建立副本**並命名為可追溯的**新版本**，記錄基線版本與偏離項目。使用者個案的副本**不覆寫**已安裝的預設基線；只有使用者明確要求更新共用基線時，才另行建立新的基線版本。
 
 ## 文件驗證與交付
 
 1. 檢查章節、圖說、紅框標註、每章編號重設、欄位表，以及更新紀錄是否齊全。
-2. 檢查所有資料變更操作都有成功影響、鎖定條件、失敗／取消行為與操作後檢核。
-3. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md) 與 [references/safe-word-render-policy.md](references/safe-word-render-policy.md) 使用固定的安全 Word 工作根目錄，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試、停止或經使用者確認的備援；含 CJK live text 時，CJK glyph 預檢必須先通過。
-4. 若已安裝 `word-render`，必須使用其 Word-first `--check-only` 與最終渲染流程，逐頁檢視 PNG，並回報**最終實際 renderer**。本技能不可在 Word 權限失敗時自行使用 `documents`；依安全 renderer 政策取得本次或已記住的明確允許後，才可採用 LibreOffice。沒有 `word-render` 時，先說明無法執行 Word-first 驗證並取得使用者確認，再使用可用的 `documents` 渲染流程；無論哪條路徑，不能以 exit code 0 取代 CJK glyph 檢視。
-5. 渲染失敗或工具不存在時，執行結構／封裝檢查並明確說明限制；**不得宣稱已完成渲染驗證**。
-6. **對話中向使用者回報**本次 renderer、工具可用性、權限失敗、fallback 與未完成的視覺驗證；這些執行環境結果**不得寫入 DOCX**。交付文件只保留使用者確認的操作內容，不得以「使用提醒」、表格或更新紀錄包裝執行環境警語。
-7. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
+2. 依 [references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md) 檢查來源分類、預設敏感值遮蔽、金額處理、redacted／annotated 圖片與媒體清理；原始圖與敏感原值不得進入交付品。
+3. 檢查所有資料變更操作都有成功影響、鎖定條件、失敗／取消行為與操作後檢核。
+4. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md)、[references/default-document-layout.md](references/default-document-layout.md) 與 [references/safe-word-render-policy.md](references/safe-word-render-policy.md) 使用固定的安全 Word 工作根目錄，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試、停止或經使用者確認的備援；含 CJK live text 時，CJK glyph 預檢必須先通過。
+5. 若已安裝 `word-render`，必須使用其 Word-first `--check-only` 與最終渲染流程，逐頁檢視 PNG，並回報**最終實際 renderer**。本技能不可在 Word 權限失敗時自行使用 `documents`；依安全 renderer 政策取得本次或已記住的明確允許後，才可採用 LibreOffice。沒有 `word-render` 時，先說明無法執行 Word-first 驗證並取得使用者確認，再使用可用的 `documents` 渲染流程；無論哪條路徑，不能以 exit code 0 取代 CJK glyph 檢視。
+6. 渲染失敗或工具不存在時，執行結構／封裝檢查並明確說明限制；**不得宣稱已完成渲染驗證**。
+7. 依 [references/independent-delivery-review.md](references/independent-delivery-review.md) 執行獨立交付審核。reviewer 直接讀取需求、最終 DOCX／頁面、redacted 圖片與受限原始證據；不採信 builder 的 `verified`。依固定 review artifact schema 保存 artifact sha256、builder／reviewer id、reviewed files 與四類 checks；任何 `fail` 為 `overall: fail`，證據不足或無 reviewer 為 `overall: blocked`。
+8. 無獨立 reviewer 時，在對話和外部審核紀錄明確標示 `independent review pending`；應持續完成所有不依賴 reviewer 的已授權工作，若交付目前產物則在檔名、資料夾或交付對話清楚標示 `draft`，不得宣稱審核通過。review environment、工具可用性、權限失敗與 fallback **不得寫入 DOCX**；交付文件只保留使用者確認的操作內容。
+9. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
 
 ## 常見錯誤
 
@@ -151,6 +161,6 @@ description: Use when creating or revising a system UI 操作說明書, user man
 | 畫面找不到欄位限制 | 明列待確認，勿自行補上。 |
 | 成功儲存後就結束 | 加入資料、下游流程、鎖定規則與回查步驟。 |
 | Word 預檢在沙箱失敗 | 使用固定 `~/.codex/tmp/word-render` 根目錄重試；仍失敗時依安全 renderer 政策停止或詢問，權限錯誤不等於 Word 不可用。 |
-| 紅框在渲染後跑版 | 先在原始 PNG 與標註 PNG 做 100% 語意檢核；DOCX 渲染只驗證版面與縮放。 |
+| 紅框在渲染後跑版 | 先在原始／redacted PNG 與標註 PNG 做 100% 語意檢核；DOCX 渲染只驗證版面與縮放，完成後仍須獨立 reviewer 審核。 |
 | 新章步驟續號 | 為每個操作小節建立獨立編號定義，從 1 起算。 |
 | 更新紀錄插在章節末 | 維持標題區塊正下方的單一表格。 |
