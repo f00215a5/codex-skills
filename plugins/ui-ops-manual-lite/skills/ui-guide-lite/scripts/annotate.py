@@ -2,13 +2,13 @@
 """Draw and verify red-box/number annotations on UI screenshots (Pillow only).
 
 Subcommands:
-    draw  --image RAW --annotations ANN.json --output OUT.png
-    check --image RAW --annotations ANN.json
+    draw  --image REDACTED --annotations ANN.json --output OUT.png
+    check --image REDACTED --annotations ANN.json
 
 Manifest schema (same shape as the QA reference):
 
     {
-      "sourceImage": "raw/create-task.png",
+      "sourceImage": "redacted/create-task.png",
       "originalImageSize": {"width": 1920, "height": 1080},
       "annotations": [
         {
@@ -17,19 +17,23 @@ Manifest schema (same shape as the QA reference):
           "caption": "紅框 1：儲存按鈕。",
           "bbox": {"x": 1050, "y": 670, "width": 92, "height": 40},
           "cursor": {"x": 900, "y": 700},   # optional
-          "status": "verified"             # verified | manual-adjusted | proposed
+          "status": "proposed"              # preview; approval is a separate review step
         }
       ]
     }
 
-`check` fails closed on hard errors (out-of-bounds box, duplicate id,
-caption/status mismatch).  Visual QA (box hugging the control, not covering
+`check` validates geometry and caption references.  It deliberately permits
+``proposed`` annotations so a preview can be drawn before semantic review.
+Use ``--require-approved`` for the build gate.  ``manual-adjusted`` is a
+provenance value (accepted for compatibility when used as ``status``), never
+an approval by itself.  Visual QA (box hugging the control, not covering
 text) stays a human 100% side-by-side check per references/annotation-qa.md.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -40,7 +44,10 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 RED = (214, 69, 69)  # kept distinct from the teal brand so it reads as an alert
-APPROVED_STATUSES = {"verified", "manual-adjusted"}
+PREVIEW_STATUSES = {"proposed", "pending", "manual-adjusted"}
+APPROVED_STATUSES = {"approved", "verified", "checked"}
+KNOWN_STATUSES = PREVIEW_STATUSES | APPROVED_STATUSES | {"blocked"}
+KNOWN_PROVENANCE = {"dom-derived", "manual-adjusted", "captured", "provided", "reused"}
 CAPTION_PATTERN = re.compile(r"紅框\s*(\d+)")
 
 
@@ -51,8 +58,25 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def hard_errors(manifest: dict[str, Any], image_path: Path) -> list[str]:
-    """Return empty list when the manifest is safe to draw / use in a build."""
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hard_errors(
+    manifest: dict[str, Any], image_path: Path, *, require_approved: bool = False
+) -> list[str]:
+    """Return hard errors before drawing or passing a build gate.
+
+    The image input is the redacted screenshot that is eligible for
+    annotation; the raw capture stays outside the document workflow.
+    Geometry is safe to check mechanically.  Whether a box actually hugs the
+    intended control remains a human/reviewer decision and is not inferred
+    from a status value.
+    """
 
     errors: list[str] = []
     try:
@@ -61,11 +85,35 @@ def hard_errors(manifest: dict[str, Any], image_path: Path) -> list[str]:
     except OSError as error:
         return [f"cannot open image {image_path}: {error}"]
 
+    declared_hash = manifest.get("sourceSha256")
+    if declared_hash is not None:
+        if not isinstance(declared_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", declared_hash):
+            errors.append("sourceSha256 must be a SHA-256 hex digest")
+        else:
+            try:
+                actual_hash = file_sha256(image_path)
+            except OSError as error:
+                errors.append(f"cannot hash source image: {error}")
+            else:
+                if actual_hash.casefold() != declared_hash.casefold():
+                    errors.append("sourceSha256 does not match source image")
+
+    declared_size = manifest.get("originalImageSize")
+    if isinstance(declared_size, dict):
+        if declared_size.get("width") != width or declared_size.get("height") != height:
+            errors.append(
+                "originalImageSize does not match raw image "
+                f"({declared_size.get('width')}x{declared_size.get('height')} != {width}x{height})"
+            )
+
     annotations = manifest.get("annotations", [])
     seen_ids: set[str] = set()
     caption_numbers: set[str] = set()
     for index, item in enumerate(annotations):
         label = f"annotations[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{label}: annotation must be an object")
+            continue
         annotation_id = item.get("id")
         if annotation_id is None or str(annotation_id) == "":
             errors.append(f"{label}: missing 'id'")
@@ -80,6 +128,9 @@ def hard_errors(manifest: dict[str, Any], image_path: Path) -> list[str]:
             errors.append(f"{label}: missing or malformed 'bbox'")
             continue
         x, y, w, h = bbox["x"], bbox["y"], bbox["width"], bbox["height"]
+        if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in (x, y, w, h)):
+            errors.append(f"{label}: bbox values must be finite numbers")
+            continue
         if w <= 0 or h <= 0:
             errors.append(f"{label}: box width/height must be positive")
         if x < 0 or y < 0 or x + w > width or y + h > height:
@@ -87,8 +138,29 @@ def hard_errors(manifest: dict[str, Any], image_path: Path) -> list[str]:
                 f"{label}: box ({x},{y},{w},{h}) is outside the {width}x{height} raw image"
             )
 
+        status = item.get("status", "proposed")
+        if not isinstance(status, str) or status.casefold() not in KNOWN_STATUSES:
+            errors.append(f"{label}: unknown annotation status {status!r}")
+        elif require_approved:
+            approval = item.get("approvalStatus")
+            approved = (
+                isinstance(approval, str) and approval.casefold() in APPROVED_STATUSES
+            ) or status.casefold() in APPROVED_STATUSES
+            if not approved:
+                errors.append(
+                    f"{label}: approval required before build (status={status!r}; "
+                    "manual-adjusted is provenance only)"
+                )
+
+        provenance = item.get("provenance")
+        if provenance is not None:
+            if not isinstance(provenance, str) or provenance.casefold() not in KNOWN_PROVENANCE:
+                errors.append(f"{label}: unknown annotation provenance {provenance!r}")
+
         caption = item.get("caption")
-        if caption:
+        if not isinstance(caption, str) or not caption.strip():
+            errors.append(f"{label}: missing caption")
+        else:
             match = CAPTION_PATTERN.match(caption)
             if match is None:
                 errors.append(f"{label}: caption does not begin with 紅框 <id>：")
@@ -98,10 +170,17 @@ def hard_errors(manifest: dict[str, Any], image_path: Path) -> list[str]:
                     errors.append(
                         f"{label}: caption number {match.group(1)!r} != id {annotation_id!r}"
                     )
-            if item.get("status") not in APPROVED_STATUSES:
-                errors.append(
-                    f"{label}: captioning a 'status' not in {sorted(APPROVED_STATUSES)}"
-                )
+        cursor = item.get("cursor")
+        if cursor is not None:
+            if not isinstance(cursor, dict) or not {"x", "y"} <= set(cursor):
+                errors.append(f"{label}: cursor must contain x and y")
+            elif not all(
+                isinstance(cursor[key], (int, float)) and math.isfinite(cursor[key])
+                for key in ("x", "y")
+            ):
+                errors.append(f"{label}: cursor values must be finite numbers")
+            elif not (0 <= cursor["x"] <= width and 0 <= cursor["y"] <= height):
+                errors.append(f"{label}: cursor is outside the raw image")
 
     if caption_numbers != seen_ids:
         errors.append(
@@ -139,7 +218,10 @@ def draw_cursor(draw: ImageDraw.ImageDraw, cursor: dict[str, Any], target: dict[
     wing = 7
     left = (base_x - wing * math.cos(angle + normal), base_y - wing * math.sin(angle + normal))
     right = (base_x - wing * math.cos(angle - normal), base_y - wing * math.sin(angle - normal))
-    for stroke_color, stroke_width in ((255, 255, 255), RED):
+    # Draw a light outline first so the red cursor remains visible on dark UI
+    # surfaces.  Keep each pair as (RGB color, line width); iterating over a
+    # bare RGB tuple would try to unpack three values and fail at draw time.
+    for stroke_color, stroke_width in (((255, 255, 255), 5), (RED, 3)):
         draw.line([cx, cy, base_x, base_y], fill=stroke_color, width=stroke_width)
         draw.polygon([tip, left, right], fill=stroke_color)
 
@@ -151,6 +233,7 @@ def draw_annotations(manifest: dict[str, Any], image_path: Path, output_path: Pa
         else:
             image = source.convert("RGB")
         width, height = image.size
+    image.info.clear()
 
     draw = ImageDraw.Draw(image)
     for index, item in enumerate(manifest["annotations"]):
@@ -175,7 +258,7 @@ def draw_annotations(manifest: dict[str, Any], image_path: Path, output_path: Pa
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(output_path)
+    image.save(output_path, format="PNG")
     print(f"ANNOTATED_IMAGE={output_path}")
 
 
@@ -189,10 +272,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     draw.add_argument("--output", required=True, type=Path)
     draw.add_argument("--stroke", type=int, default=3, help="Red box stroke width in px.")
     draw.add_argument("--font-size", type=int, default=26, help="Badge font size in px.")
+    draw.add_argument(
+        "--require-approved",
+        action="store_true",
+        help="Require approved/verified annotation status before drawing.",
+    )
 
     check = subparsers.add_parser("check", help="Validate the manifest without drawing.")
     check.add_argument("--image", required=True, type=Path)
     check.add_argument("--annotations", required=True, type=Path)
+    check.add_argument(
+        "--require-approved",
+        action="store_true",
+        help="Require approved/verified status instead of allowing a preview.",
+    )
     return parser.parse_args(argv)
 
 
@@ -200,13 +293,18 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
         manifest = load_manifest(args.annotations)
-        errors = hard_errors(manifest, args.image)
+        errors = hard_errors(manifest, args.image, require_approved=args.require_approved)
         if errors:
             for message in errors:
                 print(f"annotate.py check: {message}", file=sys.stderr)
             return 1
         if args.command == "draw":
-            draw_annotations(manifest, args.image, args.output, args.stroke, args.font_size)
+            image_path = args.image.expanduser().resolve()
+            annotation_path = args.annotations.expanduser().resolve()
+            output_path = args.output.expanduser().resolve()
+            if output_path in {image_path, annotation_path}:
+                raise ValueError("annotation output must not overwrite raw image or annotation manifest")
+            draw_annotations(manifest, image_path, output_path, args.stroke, args.font_size)
         else:
             print(
                 f"annotate.py check: OK ({len(manifest['annotations'])} annotations, "

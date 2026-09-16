@@ -62,6 +62,7 @@ from typing import Any, Iterable
 
 from docx import Document
 from docx.document import Document as DocumentType
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -87,6 +88,7 @@ RUNTIME_AVAILABILITY_MARKERS = (
     "not available",
     "cannot use",
 )
+SENSITIVE_IMAGE_DIRS = {"raw", "original", "unredacted", "source"}
 
 BULLET_ABSNUM = """<w:abstractNum xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:abstractNumId="{abs_id}">
   <w:multiLevelType w:val="hybridMultilevel"/>
@@ -120,6 +122,8 @@ def load_manifest(path: Path) -> dict[str, Any]:
         if key not in payload:
             raise ValueError(f"{path}: missing required key {key!r}")
     reject_runtime_availability_warnings(payload)
+    reject_unapproved_schematic(payload)
+    reject_unredacted_image_refs(payload)
     return payload
 
 
@@ -154,6 +158,67 @@ def resolve_image(manifest_ref: str, base: Path) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"image not found: {path}")
     return path
+
+
+def _iter_image_refs(manifest: dict[str, Any]) -> Iterable[tuple[str, str]]:
+    chapter = manifest.get("chapter") or {}
+    entry = chapter.get("entry") or {}
+    if entry.get("image"):
+        yield "chapter.entry.image", str(entry["image"])
+    for section_index, section in enumerate(chapter.get("sections", [])):
+        for step_index, step in enumerate(section.get("steps", [])):
+            if step.get("image"):
+                yield f"chapter.sections[{section_index}].steps[{step_index}].image", str(step["image"])
+
+
+def _source_kind(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.casefold()
+    if isinstance(value, dict) and isinstance(value.get("kind"), str):
+        return value["kind"].casefold()
+    return None
+
+
+def reject_unapproved_schematic(manifest: dict[str, Any]) -> None:
+    """Require a recorded user approval before a schematic replaces a screenshot."""
+
+    source = manifest.get("screenshotSource", manifest.get("sourceKind"))
+    if _source_kind(source) == "schematic" and not (
+        manifest.get("schematicApproved") is True
+        or manifest.get("allowSchematic") is True
+        or (isinstance(source, dict) and source.get("approved") is True)
+    ):
+        raise ValueError("schematic screenshot source requires explicit user approval")
+    chapter = manifest.get("chapter") or {}
+    blocks = [chapter.get("entry") or {}]
+    blocks.extend(
+        step
+        for section in chapter.get("sections", [])
+        for step in section.get("steps", [])
+    )
+    for index, block in enumerate(blocks):
+        block_source = block.get("screenshotSource", block.get("sourceKind"))
+        if _source_kind(block_source) == "schematic" and not (
+            block.get("schematicApproved") is True
+            or block.get("allowSchematic") is True
+            or (isinstance(block_source, dict) and block_source.get("approved") is True)
+        ):
+            raise ValueError(f"chapter image {index}: schematic source requires explicit user approval")
+
+
+def _is_unredacted_reference(reference: str) -> bool:
+    path = reference.replace("\\", "/").casefold()
+    parts = [part for part in path.split("/") if part]
+    if any(part in SENSITIVE_IMAGE_DIRS for part in parts[:-1]):
+        return True
+    stem = Path(parts[-1]).stem if parts else ""
+    return stem.startswith(("raw-", "raw_", "original-", "original_", "unredacted-", "unredacted_"))
+
+
+def reject_unredacted_image_refs(manifest: dict[str, Any]) -> None:
+    for path, reference in _iter_image_refs(manifest):
+        if _is_unredacted_reference(reference):
+            raise ValueError(f"{path}: raw or unredacted image cannot be embedded; use redacted PNG")
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +291,36 @@ def shade_cell(cell, fill: str) -> None:
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:fill"), fill)
     tc_pr.append(shd)
+
+
+def _replace_child(parent, tag: str, **attributes: str) -> OxmlElement:
+    """Set one direct table property deterministically."""
+
+    element = parent.find(qn(tag))
+    if element is None:
+        element = OxmlElement(tag)
+        parent.append(element)
+    for key, value in attributes.items():
+        element.set(qn(key), value)
+    return element
+
+
+def set_table_layout(table) -> None:
+    """Center a table in the usable container and leave sizing content-driven.
+
+    Word and python-docx defaults have changed over time.  Explicit table
+    properties keep a narrow table centered after such changes while
+    ``autofit`` leaves width and row height flexible rather than hard-coding
+    pixels or forcing every table to fill the page.
+    """
+
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = True
+    tbl_pr = table._tbl.tblPr
+    _replace_child(tbl_pr, "w:jc", **{"w:val": "center"})
+    _replace_child(tbl_pr, "w:tblInd", **{"w:w": "0", "w:type": "dxa"})
+    _replace_child(tbl_pr, "w:tblLayout", **{"w:type": "autofit"})
+    _replace_child(tbl_pr, "w:tblW", **{"w:w": "0", "w:type": "auto"})
 
 
 # --------------------------------------------------------------------------- #
@@ -310,6 +405,7 @@ def build_tables(document: DocumentType, rows: Iterable[list[str]], header: list
                  font_name: str = DEFAULT_FONT) -> None:
     table = document.add_table(rows=1, cols=len(header))
     table.style = "Table Grid"
+    set_table_layout(table)
     for index, title in enumerate(header):
         heading_cell(table.rows[0].cells[index], title, font_name)
     for row in rows:
