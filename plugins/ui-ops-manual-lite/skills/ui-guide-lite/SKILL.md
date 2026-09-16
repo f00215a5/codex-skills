@@ -5,7 +5,7 @@ description: Use when creating or revising a 系統 UI 操作說明書, user man
 
 # UI 操作說明書（輕量版）
 
-建立可操作、可驗證的系統 UI 說明書。先確認畫面範圍與預設模板；用實機和來源證據描述畫面，而不是猜測控制項或後續影響。本版**僅依賴 Python 與本地 venv**（python-docx、Pillow）建立 DOCX 與完成標註語意／結構 QA，**不需要外部文件引擎**。視覺驗證範圍只在對話中回報，不加入交付文件。
+建立可操作、可驗證的系統 UI 說明書。先確認畫面範圍與預設模板；用實機和來源證據描述畫面，而不是猜測控制項或後續影響。本版**僅依賴 Python 與本地 venv**（python-docx、Pillow）建立 DOCX、處理圖片與完成結構 QA，**不需要外部文件引擎**。本版沒有 DOCX renderer；渲染結果與限制只在對話中回報，不加入交付文件。即使不做 DOCX 渲染，隱碼、標註語意、文件結構與獨立交付審核仍是獨立關卡。
 
 ## 新任務第一輪回覆（強制）
 
@@ -53,7 +53,7 @@ description: Use when creating or revising a 系統 UI 操作說明書, user man
 | 標註 | 啟用 | 點擊或輸入處以**紅色方框**和編號標示；必要時加游標 icon。 |
 | 成功影響 | 啟用 | 每一項會改變資料的操作，均說明**修改成功後的影響**與檢核方式。 |
 | 交付 | 必要 | 文件名稱、初始版本與**交付資料夾**。未提供時詢問，勿將檔案寫到未授權位置。 |
-| 結構驗證 | 啟用 | 組檔後以 `verify_docx.py` 驗證結構與語意；視覺驗證範圍另於對話回報。 |
+| 結構驗證 | 啟用 | 組檔後以 `verify_docx.py` 驗證結構與 manifest 形式對應；內容語意另由獨立 reviewer 核對，視覺驗證範圍於對話回報。 |
 
 同時確認登入／測試資料的授權範圍。只用於取證；遮蔽密碼、權杖、個資與不應外流的業務資料。遇到會寫入、送出、刪除或觸發排程的 UI 動作，先取得當下確認。
 
@@ -97,15 +97,23 @@ python3 "<skill-path>/scripts/bootstrap.py"
 
 **各操作小節獨立使用步驟編號，從步驟 1 開始**；不要讓新章節延續成「步驟 25」。圖說的紅框編號與同張圖的標註一致，不要把圖號當成操作步驟號。
 
-截圖先取原始證據，再產生標註副本。若同一畫面有多個動作，使用較少但可讀的截圖，不要用一張過度標註的全景圖取代流程。
+截圖先取原始證據，再產生遮蔽與標註副本。若同一畫面有多個動作，使用較少但可讀的截圖，不要用一張過度標註的全景圖取代流程。
+
+## 來源與隱碼
+
+截圖預設保留實際系統畫面；只有使用者明確要求示意圖、重繪圖或簡化圖時，才可對指定範圍使用 `schematic`。每張圖記錄 `sourceKind`：`captured`、`provided`、`reused` 或獲明示核准的 `schematic`。無法取得適用的實際畫面時，標為待補證據或 draft，不自行重繪後冒稱為 screenshot。詳細範圍見 [references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md)。
+
+預設遮蔽姓名、身分 ID、客戶／會員／員工 ID、地址、電話、電子郵件、保單號、帳單號、合約號、交易／案件識別碼、密碼、權杖、API key、session 值及不應外流的內部帳號。**金額預設保留**；只有使用者或資料政策明確要求時才列入遮蔽。不得以抽象圖代替精準遮蔽，也不得把敏感原值寫入 manifest、caption、檔名或交付包。
+
+固定採「raw → redacted → annotated → DOCX」順序。用 `redact.py draw` 以不透明色塊（`opaque-rectangle`）或像素化（`pixelate`）精準覆蓋敏感區域，保留來源與輸出 SHA-256；再以 `redact.py check --require-checked` 作為證據關卡。raw 僅存於受限 QA 工作區，不能嵌入 DOCX 或交付。座標／雜湊檢查只能證明列出的矩形與檔案相符，不能證明已找出所有敏感值；這仍須由能直接看圖的獨立 reviewer 核對。
 
 ## 標註
 
-對每張要標註的原始截圖建立一份標註 manifest（JSON），內容與格式見 [references/annotation-qa.md](references/annotation-qa.md)。座標從 DOM 邊界按比例換算，人工操作只做微調。
+對每張要標註的遮蔽後截圖建立一份標註 manifest（JSON），內容與格式見 [references/annotation-qa.md](references/annotation-qa.md)。座標從 DOM 邊界按比例換算，人工操作只做微調，並記錄 `provenance: "manual-adjusted"`。
 
-- 先以 `annotate.py check` 通過硬檢查（越界框、重複 id、圖說編號不一致、未驗證 status 都會失敗），再以 `annotate.py draw` 產生標註 PNG。
-- 在**組 DOCX 前**，將 raw + annotated 以 **100%** 並排檢視，逐筆通過 [references/annotation-qa.md](references/annotation-qa.md) 的四項清單後才把 `status` 設為 `verified`。
-- 紅框、編號、圖說三者一致是獨立的交付條件；沒有渲染器可以事後修正 raw 圖上錯誤的座標。
+- 先以 `annotate.py check` 通過幾何、尺寸、來源 hash、重複 id 與圖說編號硬檢查；它允許 `proposed`／`pending`／`manual-adjusted`，供預覽流程使用。再以 `annotate.py draw` 產生可審閱的標註 PNG。
+- 在**正式交付前**，將 redacted + annotated 以 **100%** 並排檢視，逐筆通過 [references/annotation-qa.md](references/annotation-qa.md) 的清單後，才可由 reviewer 確認為 `approved`／`verified`／`checked`，並以 `annotate.py check --require-approved` 核對批准狀態。`manual-adjusted` 是來源／修改 provenance，永遠不等於批准；不能為了讓 draw 通過而預填 `verified`。
+- 紅框、編號、圖說三者一致是獨立的交付條件；沒有渲染器也不能事後修正原圖上錯誤的座標。可在受限工作區先組裝含已遮蔽候選 PNG 的 draft 供 reviewer 核對，保留待審狀態；正式交付只能使用完成隱碼與標註驗收的 PNG。
 
 ## 操作圖表（條件式）
 
@@ -117,7 +125,7 @@ python3 "<skill-path>/scripts/bootstrap.py"
 
 ## 文件結構與版面（build_docx.py）
 
-開始排版前閱讀 [references/document-structure-qa.md](references/document-structure-qa.md)（版面基線與驗收標準）。把擷取結果整理成 build manifest（JSON），結構與全部欄位見 `scripts/build_docx.py` 的 docstring。文件順序固定為：
+開始排版前閱讀 [references/document-structure-qa.md](references/document-structure-qa.md) 與 [references/visual-consistency-standard.md](references/visual-consistency-standard.md)（版面基線與驗收標準）。把擷取結果整理成 build manifest（JSON），結構與全部欄位見 `scripts/build_docx.py` 的 docstring。文件順序固定為：
 
 1. 標題區塊：標題、副標題、適用畫面。
 2. **更新紀錄**：標題區塊正下方的單一表格，集中列出所有版本。
@@ -137,19 +145,34 @@ python3 "<skill-path>/scripts/bootstrap.py"
 
 ## 文件驗證與交付
 
-1. 檢查章節、圖說、紅框標註、每章編號重設、欄位表，以及更新紀錄是否齊全。
-2. 檢查所有資料變更操作都有成功影響、鎖定條件、失敗／取消行為與操作後檢核。
-3. 以 `verify_docx.py` 執行結構驗證：
+1. 依 [references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md) 檢查每張圖的 `sourceKind`、敏感欄位清單、金額處理、raw／redacted／annotated provenance 與交付包內容。先以 `redact.py check --require-checked`、`annotate.py check --require-approved` 完成圖片關卡。
+2. 以 `build_docx.py` 組檔；它會拒絕未獲明示核准的 `schematic` 圖與 raw／unredacted 圖片路徑。組檔前確認 build manifest 只引用 redacted／annotated PNG。
+3. 檢查章節、圖說、紅框標註、每章編號重設、欄位表，以及更新紀錄是否齊全；檢查表格明確相對容器可用內容區置中且尺寸可彈性調整。
+4. 檢查所有資料變更操作都有成功影響、鎖定條件、失敗／取消行為與操作後檢核。
+5. 以 `verify_docx.py` 執行結構驗證：
 
 ```text
 <venv>/bin/python "<skill-path>/scripts/verify_docx.py" \
   --docx "<deliverable>/<file>.docx" --manifest "<workspace>/manual.json"
 ```
 
-全部檢查通過（exit code 0）才算完成；任何一項失敗，修正後重新組檔再驗證。**exit code 0 只代表結構與語意檢查通過**，不代表視覺上可讀。
+結構檢查通過（exit code 0）後才進入交付審核；任何一項失敗，修正後重新組檔再驗證。**exit code 0 只代表程式列出的結構與 manifest 形式對應檢查通過**，不能證明內容語意、隱碼完整性或視覺可讀性，也不代表已完成獨立審核。
 
-4. **對話中向使用者回報驗證範圍**：說明結構與語意檢查結果，以及仍需以實際文書軟體確認的視覺結果。這類執行環境與驗證範圍**不得寫入 DOCX**；交付文件只保留使用者確認的操作內容。使用者需要渲染驗證時，改用完整版 `$ui-guide`。
-5. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
+6. 以 `audit_delivery.py --docx <final.docx> --output <qa>/structure.json` 產生唯讀封裝／結構／媒體 hash 報告，再由非 builder 的 reviewer 建立獨立 review artifact。review 固定包含 `requirements`、`redaction`、`operation`、`layout_structure` 四類 checks，以及 `render_visual`；本版的 `render_visual.status` 只能是 `not_performed` 或 `out_of_scope` 並附原因，不得填 `pass`。
+7. reviewer 的 `artifact.sha256` 必須綁定最終 DOCX；`reviewed_files` 必須逐筆列出最終 DOCX 所有嵌入圖片、build manifest、需求／需求 snapshot 與相關 redaction／annotation manifests，且每筆 hash 與實際檔案一致。`builder.id` 與 `reviewer.id` 必須明確且不同；不能由 builder 改名自審。文件、圖片、manifest 或需求證據變更後，重新計算受影響 hash 並重做相應 checks，不能只替舊 review 換 hash。
+8. 以不同輸出檔執行 review 驗證：
+
+```text
+<venv>/bin/python "<skill-path>/scripts/audit_delivery.py" \
+  --docx "<deliverable>/<file>.docx" \
+  --review "<qa>/review.json" \
+  --manifest "<workspace>/manual.json" \
+  --output "<qa>/review-validation.json"
+```
+
+`audit_delivery.py` 的 exit code 0 只代表報告成功寫出；同時檢查 `mechanical_status` 與 `independent_review.status`。若沒有 reviewer、無法檢視圖片、證據缺失／過期或任一必要 check 未完成，狀態為 `blocked`，可繼續不依賴審核的已授權工作，但目前產物只能標示 `draft`，不得正式宣稱通過。若四類適用 checks、所有 hashes 與 review artifact 均有效，即使 `render_visual` 為 `not_performed`／`out_of_scope`，仍可依本輕量版範圍正式交付。
+9. 將下列六步交接清單寫入對話或外部 QA 紀錄，逐項標示證據與狀態：**隱碼、標註、結構、獨立審核、證據雜湊、交付範圍**。不得把 renderer、權限、reviewer 或 fallback 警語寫入 DOCX；使用者需要 DOCX 視覺渲染時，改用完整版 `$ui-guide`。
+10. 交付前確認新檔版本、檔名、目標資料夾和副本未覆寫來源；回報代表性變更、驗證結果與未解限制。
 
 ## 常見錯誤
 
@@ -159,9 +182,14 @@ python3 "<skill-path>/scripts/bootstrap.py"
 | repository/tag 有變更但未列出畫面 | 從前端差異提出候選清單，再由使用者確認。 |
 | 畫面找不到欄位限制 | 明列待確認，勿自行補上。 |
 | 成功儲存後就結束 | 加入資料、下游流程、鎖定規則與回查步驟。 |
-| 紅框座標在圖上就不對 | 回到 raw 圖與 manifest 做 100% 檢核後重畫；組 DOCX 前修正，勿指望嵌入後自動變對。 |
+| 敏感識別資料仍可見 | 回到 raw／redacted 對照補足精準色塊或像素化；身分 ID、地址、保單號、帳單號、合約號等預設遮蔽，金額依預設保留。 |
+| 紅框座標在圖上就不對 | 回到 redacted 圖與 manifest 做 100% 檢核後重畫；組 DOCX 前修正，勿指望嵌入後自動變對。 |
+| 想在 preview 前填 verified | 使用 `proposed`／`pending` 先通過 `annotate.py check` 並 `draw` 預覽；`manual-adjusted` 只記 provenance，須完成語意核對後再用 `--require-approved`。 |
+| 只靠 Pillow 或 DOM 宣稱隱碼／標註通過 | 機械檢查只證明座標、尺寸與 hash；改由能看圖的獨立 reviewer 核對完整性與語意。 |
+| 昨日 review 後替換圖片、manifest 或 DOCX | 使受影響 review 失效，重算實際 hash 並重做相關 checks；不可只替舊紀錄換 hash。 |
+| 缺少獨立 reviewer | 繼續可做的已授權工作，交付狀態標為 draft／blocked；不得自換 reviewer 身分或宣稱 pass。 |
 | 新章步驟續號 | 每個操作小節獨立編號（build_docx.py 每次建立新 numId），從 1 起算。 |
 | 更新紀錄插在章節末 | 維持標題區塊正下方的單一表格。 |
-| 宣稱「渲染驗證通過」 | 本版不做渲染驗證；只陳述結構驗證結果並請使用者開啟確認。 |
+| 宣稱「渲染驗證通過」 | 本版不做 DOCX 渲染；只陳述結構／封裝與獨立 review 範圍，需渲染時改用完整版 `$ui-guide`。 |
 | 將執行環境或驗證範圍寫入文件 | 只在對話中向使用者回報；DOCX 保留操作內容。 |
 | 未建立 venv 就直接跑腳本 | 先執行 `bootstrap.py`，一律使用 `~/.codex/venvs/ui-ops-manual-lite/bin/python`。 |

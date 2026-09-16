@@ -1,52 +1,67 @@
-# 截圖標註與結構 QA（輕量版）
+# 截圖標註與圖片 QA（輕量版）
 
-本技能的 QA 有兩道關卡：**標註語意 QA**（在組 DOCX 之前）與 **DOCX 結構 QA**（`verify_docx.py`）。本版以 Python 完成建檔與驗證，紅框座標的正確性必須在圖片層級完成，不能靠後續文件處理來「補救」。
+本流程把「可產生預覽的幾何檢查」和「由能看圖的人確認語意」分開。輕量版不渲染 DOCX，但仍須在圖片層級核對隱碼與標註；`verify_docx.py` 或任何 exit code 都不能取代這項核對。
 
-## 1. 標註語意 QA（先於 build_docx.py）
+## 標註 manifest
 
-每張要放進文件的原圖建立一份標註 manifest（JSON），與 raw、annotated PNG 一起保存。每筆記錄：
+標註應套用在已完成隱碼的 redacted PNG。raw 只供受限 QA 對照，不嵌入 DOCX。每張圖建立一份 JSON manifest；座標從 DOM 邊界按比例換算，人工只做最終微調並留下 provenance：
 
 ```json
 {
-  "sourceImage": "raw/create-task.png",
-  "originalImageSize": { "width": 1920, "height": 1080 },
+  "sourceImage": "redacted/create-task.png",
+  "sourceSha256": "<redacted-image-sha256>",
+  "originalImageSize": {"width": 1920, "height": 1080},
   "annotations": [
     {
       "id": "1",
       "controlName": "儲存",
       "caption": "紅框 1：儲存按鈕。",
-      "bbox": { "x": 1050, "y": 670, "width": 92, "height": 40 },
-      "cursor": { "x": 900, "y": 700 },
-      "status": "verified"
+      "bbox": {"x": 1050, "y": 670, "width": 92, "height": 40},
+      "provenance": "dom-derived",
+      "status": "proposed"
     }
   ]
 }
 ```
 
-能取 DOM 時，先以 `getBoundingClientRect` 取得控制項邊界，把 CSS viewport 座標按原始 PNG 寬高**比例換算**成候選框座標：`x = rect.left × pngWidth / viewportWidth`、`y = rect.top × pngHeight / viewportHeight`（全頁截圖另加捲動位移）。人工操作只做**最終微調**並把來源改為 `manual-adjusted`。座標寫入 manifest 的 `bbox`，`annotate.py` 不會幫你重新對齊。
+`provenance` 可使用 `dom-derived`、`manual-adjusted`、`captured`、`provided` 或 `reused`。`manual-adjusted` 只記錄人為微調來源，**不是批准**。
 
-**在組 DOCX 之前**，把 raw + annotated 以 **100%** 並排檢視，逐筆通過以下清單才把 `status` 設為 `verified`：
+能取 DOM 時，先用 `getBoundingClientRect` 取得控制項邊界，再依原始 PNG 與 viewport 尺寸比例換算：`x = rect.left × pngWidth / viewportWidth`、`y = rect.top × pngHeight / viewportHeight`；全頁截圖還要加入捲動位移。不要假設截圖倍率為 1。
 
-1. raw 圖確實有 manifest 指定的控制項，且紅框完整框住它、不框到鄰近控制項或空白。
-2. 紅框編號、manifest id 與圖說編號三者一致；圖說使用畫面上的實際名稱。
-3. 框線、編號和游標不遮蔽控制項文字、輸入值或錯誤訊息。
-4. 截圖顯示的狀態與步驟相符（例如按鈕可用、對話框已開啟、成功訊息已出現）。
+## 先預覽，再核對，再批准
 
-每次組檔前執行硬檢查：
+先以 `annotate.py check` 做幾何與 manifest 硬檢查。它會檢查來源 hash（若提供）、原圖尺寸、座標邊界、正數寬高、重複 id、caption 的「紅框 N」與 id 一致性、cursor 邊界及狀態／provenance 值；沒有 `--require-approved` 時，允許 `proposed`、`pending` 與 `manual-adjusted`。錯誤即停止，修正後重跑。
+
+接著產生可審閱的圖片預覽：
 
 ```text
 <venv>/bin/python "<skill>/scripts/annotate.py" check \
-  --image "<raw>.png" --annotations "<image>.json"
+  --image "<redacted>.png" --annotations "<annotation>.json"
 <venv>/bin/python "<skill>/scripts/annotate.py" draw \
-  --image "<raw>.png" --annotations "<image>.json" --output "<annotated>.png"
+  --image "<redacted>.png" --annotations "<annotation>.json" \
+  --output "<annotated>.png"
 ```
 
-`check` 對越界框、重複 id、圖說編號不一致、未驗證 status 一律**fail closed**；`draw` 畫出紅框與編號徽章（必要時依 manifest 的 `cursor` 畫游標箭頭）。徽章預設放在紅框左上角外側，空間不足時改置於框內角落，避免遮住控制項文字。
+`draw` 可以處理 `proposed` 預覽；不能為了讓它執行而先填 `verified`。預覽完成後，能直接看圖的獨立 reviewer 將 redacted 與 annotated 以 100% 並排核對：
 
-**紅框、編號、圖說三者一致是獨立的交付條件**。若 raw 座標就錯，嵌入 DOCX 只會把同一個錯誤等比帶進文件，必須在組檔前修正。
+1. 紅框完整框住指定控制項，不框到鄰近控制項或不相關空白。
+2. 紅框編號、manifest id、caption 編號與畫面上的實際控制項名稱一致。
+3. 框線、編號與 cursor 不遮蔽控制項文字、輸入值、訊息或必要的已保留金額。
+4. 截圖狀態與操作步驟相符，控制項的可用／鎖定狀態沒有被誤述。
+5. 圖片已依 [screenshot-redaction-policy.md](screenshot-redaction-policy.md) 完成敏感資訊遮蔽，且 raw 不在交付包。
 
-## 2. DOCX 結構 QA（組檔後）
+確認後才將每筆狀態改為 `approved`、`verified` 或 `checked`，再執行：
 
-`build_docx.py` 組出 DOCX 後，以 `verify_docx.py` 做可程式化的結構與語意檢查：章節順序、圖說順序與 build manifest 一致、每個操作小節獨立編號、欄位表欄位齊全、更新紀錄在文末、頁面與邊界符合基線、每張嵌入圖在套件內可解析、圖後必接圖說。檢查項目詳見 [document-structure-qa.md](document-structure-qa.md)；任何一項失敗即回傳非零 exit code，**不得宣稱文件通過驗證**。
+```text
+<venv>/bin/python "<skill>/scripts/annotate.py" check \
+  --image "<redacted>.png" --annotations "<annotation.json>" \
+  --require-approved
+```
 
-`verify_docx.py` 不檢查、也不能檢查開啟後的字型取代、分頁斷行或版面美觀——這些屬於使用者的開啟端檢視，不屬於本技能的驗證範圍。
+`--require-approved` 只是建置前的狀態門檻；它不能證明 reviewer 看過正確的控制項。builder 的 `verified` 也不能代替獨立交付審核。若圖片無法檢視，標註 `operation` 與隱碼相關 review 保持 `blocked`，不要填 pass；可繼續其他已授權工作並交付 draft。
+
+## 交給 DOCX 與後續審核
+
+正式交付的 annotated PNG 必須完成隱碼、標註 preview 與上述批准。為取得可審閱的成品，可以先在受限工作區組裝包含候選圖片的 draft，並清楚記錄待審狀態；不得將此草稿當成已審核交付物。`build_docx.py` 會拒絕明顯 raw／unredacted 圖片路徑，但不會從一個檔名推定隱碼或控制項語意；圖片與 manifest 仍由 reviewer 直接檢查。
+
+`verify_docx.py` 只驗證 DOCX 結構、章節順序、編號、欄位表、圖片封裝與圖說相鄰性；它不能檢查像素、隱碼完整性、框線是否貼合控制項、字型替代或實際視覺可讀性。完成 DOCX 後依 [independent-delivery-review.md](independent-delivery-review.md) 綁定最終 DOCX、所有嵌入圖片、build manifest、redaction／annotation manifests、需求證據與 hash。更新紀錄位於標題區塊正下方的第一張表，不在文末。

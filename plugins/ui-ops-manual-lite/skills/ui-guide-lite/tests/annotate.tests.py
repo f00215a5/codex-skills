@@ -97,7 +97,7 @@ class AnnotateCheckTests(unittest.TestCase):
             self.assertIn("duplicate id", result.stderr)
             self.assertIn("!= id", result.stderr)
 
-    def test_unverified_caption_fails(self) -> None:
+    def test_proposed_caption_requires_approval_only_at_build_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
             raw = workspace / "raw.png"
@@ -109,10 +109,34 @@ class AnnotateCheckTests(unittest.TestCase):
             manifest_path = workspace / "annotations.json"
             manifest_path.write_text(json.dumps(ann), encoding="utf-8")
 
-            result = self.run_tool("check", raw, manifest_path)
+            result = self.run_tool("check", raw, manifest_path, "--require-approved")
 
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("status", result.stderr)
+            self.assertIn("approval", result.stderr)
+
+    def test_cursor_annotation_draws_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            raw = workspace / "raw.png"
+            output = workspace / "annotated.png"
+            make_raw_image(raw)
+            ann = manifest_for("raw.png", [{
+                "id": "1",
+                "controlName": "查詢",
+                "caption": "紅框 1：查詢按鈕。",
+                "bbox": {"x": 120, "y": 70, "width": 60, "height": 24},
+                "cursor": {"x": 40, "y": 30},
+                "status": "proposed",
+            }])
+            manifest_path = workspace / "annotations.json"
+            manifest_path.write_text(json.dumps(ann, ensure_ascii=False), encoding="utf-8")
+
+            result = self.run_tool("draw", raw, manifest_path, "--output", str(output))
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.exists())
+            with Image.open(output) as annotated, Image.open(raw) as source:
+                self.assertNotEqual(annotated.tobytes(), source.tobytes())
 
 
 if __name__ == "__main__":

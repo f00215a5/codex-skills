@@ -90,6 +90,37 @@ def table_headers(table) -> list[str]:
     return [cell.text.strip() for cell in table.rows[0].cells]
 
 
+def table_layout_properties(table) -> tuple[str | None, str | None, str | None, int | None, int | None]:
+    """Return alignment, width/layout and declared/grid widths in twips."""
+
+    tbl_pr = table._tbl.tblPr
+    alignment = tbl_pr.find(qn("w:jc"))
+    width = tbl_pr.find(qn("w:tblW"))
+    layout = tbl_pr.find(qn("w:tblLayout"))
+    try:
+        width_value = int(width.get(qn("w:w"))) if width is not None else None
+    except (TypeError, ValueError):
+        width_value = None
+    grid = table._tbl.tblGrid
+    grid_width = 0
+    grid_valid = True
+    for column in grid:
+        try:
+            grid_width += int(column.get(qn("w:w")))
+        except (TypeError, ValueError):
+            grid_valid = False
+            break
+    if not grid_valid or grid_width <= 0:
+        grid_width = None
+    return (
+        alignment.get(qn("w:val")) if alignment is not None else None,
+        width.get(qn("w:type")) if width is not None else None,
+        layout.get(qn("w:type")) if layout is not None else None,
+        width_value,
+        grid_width,
+    )
+
+
 def main() -> int:
     args = parse_args()
     docx_path = args.docx.expanduser().resolve()
@@ -163,6 +194,21 @@ def main() -> int:
 
     # -- field tables ------------------------------------------------------- #
     tables = document.tables
+    for index, table in enumerate(tables, start=1):
+        alignment, width_type, layout, width_value, grid_width = table_layout_properties(table)
+        reporter.check(
+            f"table {index} has explicit center alignment",
+            alignment == "center",
+            detail=f"alignment={alignment!r}",
+        )
+        reporter.check(
+            f"table {index} uses flexible layout",
+            layout in {"autofit", "fixed", None}
+            and width_type in {"auto", "pct", "dxa", None}
+            and (width_value is None or width_value <= 10368 + 20)
+            and (grid_width is None or grid_width <= 10368 + 20),
+            detail=f"width_type={width_type!r} layout={layout!r} width_twips={width_value!r} grid_twips={grid_width!r}",
+        )
     field_tables = [
         t for t in tables
         if any("欄位" in header or "控制項" in header for header in table_headers(t))
