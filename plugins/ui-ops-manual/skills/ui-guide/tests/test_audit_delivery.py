@@ -43,6 +43,7 @@ def _table(
     tblw_value: int = 3000,
     layout: str | None = None,
     secret: str = "private-value-should-not-appear",
+    first_row_texts: list[str] | None = None,
 ) -> ET.Element:
     table = ET.Element(w("tbl"))
     properties = ET.SubElement(table, w("tblPr"))
@@ -64,9 +65,9 @@ def _table(
         column = ET.SubElement(grid_element, w("gridCol"))
         column.set(wattr("w"), str(width))
 
-    for row_values in rows:
+    for row_index, row_values in enumerate(rows):
         row = ET.SubElement(table, w("tr"))
-        for span, width in row_values:
+        for cell_index, (span, width) in enumerate(row_values):
             cell = ET.SubElement(row, w("tc"))
             cell_pr = ET.SubElement(cell, w("tcPr"))
             tcw = ET.SubElement(cell_pr, w("tcW"))
@@ -78,13 +79,22 @@ def _table(
             paragraph = ET.SubElement(cell, w("p"))
             run = ET.SubElement(paragraph, w("r"))
             text = ET.SubElement(run, w("t"))
-            text.text = secret
+            if row_index == 0 and first_row_texts is not None and cell_index < len(first_row_texts):
+                text.text = first_row_texts[cell_index]
+            else:
+                text.text = secret
     return table
 
 
-def _document(table: ET.Element) -> bytes:
+def _document(table: ET.Element, *, num_id: str | None = None) -> bytes:
     root = ET.Element(w("document"))
     body = ET.SubElement(root, w("body"))
+    if num_id is not None:
+        paragraph = ET.SubElement(body, w("p"))
+        properties = ET.SubElement(paragraph, w("pPr"))
+        numbering = ET.SubElement(properties, w("numPr"))
+        number = ET.SubElement(numbering, w("numId"))
+        number.set(wattr("val"), num_id)
     body.append(table)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
@@ -97,6 +107,49 @@ def _styles_center() -> bytes:
     tbl_pr = ET.SubElement(style, w("tblPr"))
     jc = ET.SubElement(tbl_pr, w("jc"))
     jc.set(wattr("val"), "center")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _numbering(
+    *,
+    abstract_first: bool = True,
+    suff_after_lvl_text: bool = False,
+    abstract_id: str = "1",
+    num_id: str = "1",
+    abstract_ref: str = "1",
+) -> bytes:
+    root = ET.Element(w("numbering"))
+
+    def add_abstract() -> None:
+        abstract = ET.SubElement(root, w("abstractNum"))
+        abstract.set(wattr("abstractNumId"), abstract_id)
+        level = ET.SubElement(abstract, w("lvl"))
+        level.set(wattr("ilvl"), "0")
+        start = ET.SubElement(level, w("start"))
+        start.set(wattr("val"), "1")
+        num_format = ET.SubElement(level, w("numFmt"))
+        num_format.set(wattr("val"), "decimal")
+        if not suff_after_lvl_text:
+            suffix = ET.SubElement(level, w("suff"))
+            suffix.set(wattr("val"), "tab")
+        level_text = ET.SubElement(level, w("lvlText"))
+        level_text.set(wattr("val"), "%1.")
+        if suff_after_lvl_text:
+            suffix = ET.SubElement(level, w("suff"))
+            suffix.set(wattr("val"), "tab")
+
+    def add_num() -> None:
+        number = ET.SubElement(root, w("num"))
+        number.set(wattr("numId"), num_id)
+        abstract = ET.SubElement(number, w("abstractNumId"))
+        abstract.set(wattr("val"), abstract_ref)
+
+    if abstract_first:
+        add_abstract()
+        add_num()
+    else:
+        add_num()
+        add_abstract()
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
@@ -116,6 +169,8 @@ def _write_docx(
     table: ET.Element,
     *,
     styles: bytes | None = None,
+    numbering: bytes | None = None,
+    num_id: str | None = None,
     media: list[str] | None = None,
     referenced_media: list[str] | None = None,
 ) -> Path:
@@ -123,9 +178,11 @@ def _write_docx(
     referenced_media = referenced_media or []
     path = directory / name
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
-        package.writestr("word/document.xml", _document(table))
+        package.writestr("word/document.xml", _document(table, num_id=num_id))
         if styles is not None:
             package.writestr("word/styles.xml", styles)
+        if numbering is not None:
+            package.writestr("word/numbering.xml", numbering)
         if referenced_media:
             package.writestr("word/_rels/document.xml.rels", _relationships(referenced_media))
         for media_name in media:
@@ -188,6 +245,171 @@ class AuditDeliveryTests(unittest.TestCase):
         self.assertEqual(report["tables"][0]["grid"]["status"], "fail")
         self.assertEqual(report["mechanical_status"], "failed")
         self.assertEqual(report["tables"][0]["grid"]["findings"][0]["expected_twips"], 3000)
+
+    def test_numbering_structure_and_references_pass(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        path = _write_docx(self.root, "numbering-valid.docx", table, numbering=_numbering(), num_id="1")
+
+        report = audit_delivery.audit_docx(path)
+
+        self.assertEqual(report["mechanical_status"], "pass")
+        self.assertNotIn("numbering_abstract_num_after_num", {item["code"] for item in report["findings"]})
+        self.assertNotIn("numbering_suff_after_lvl_text", {item["code"] for item in report["findings"]})
+        self.assertNotIn("numbering_num_id_missing", {item["code"] for item in report["findings"]})
+        self.assertNotIn("numbering_abstract_num_id_missing", {item["code"] for item in report["findings"]})
+
+    def test_numbering_num_id_zero_removes_numbering_without_definition(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        path = _write_docx(self.root, "numbering-remove.docx", table, num_id="0")
+
+        report = audit_delivery.audit_docx(path)
+
+        self.assertEqual(report["mechanical_status"], "pass")
+        self.assertNotIn("numbering_num_id_missing", {item["code"] for item in report["findings"]})
+
+    def test_numbering_abstract_num_must_precede_num(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        path = _write_docx(
+            self.root,
+            "numbering-abstract-after-num.docx",
+            table,
+            numbering=_numbering(abstract_first=False),
+            num_id="1",
+        )
+
+        report = audit_delivery.audit_docx(path)
+
+        self.assertEqual(report["mechanical_status"], "failed")
+        self.assertIn("numbering_abstract_num_after_num", {item["code"] for item in report["findings"]})
+
+    def test_numbering_suff_must_precede_lvl_text(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        path = _write_docx(
+            self.root,
+            "numbering-suff-after-lvl-text.docx",
+            table,
+            numbering=_numbering(suff_after_lvl_text=True),
+            num_id="1",
+        )
+
+        report = audit_delivery.audit_docx(path)
+
+        self.assertEqual(report["mechanical_status"], "failed")
+        self.assertIn("numbering_suff_after_lvl_text", {item["code"] for item in report["findings"]})
+
+    def test_numbering_references_must_exist(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        path = _write_docx(
+            self.root,
+            "numbering-missing-references.docx",
+            table,
+            numbering=_numbering(abstract_ref="9"),
+            num_id="9",
+        )
+
+        report = audit_delivery.audit_docx(path)
+        codes = {item["code"] for item in report["findings"]}
+
+        self.assertEqual(report["mechanical_status"], "failed")
+        self.assertIn("numbering_num_id_missing", codes)
+        self.assertIn("numbering_abstract_num_id_missing", codes)
+        self.assertNotIn("private-value-should-not-appear", json.dumps(report))
+
+    def test_default_layout_flag_accepts_update_record_header(self) -> None:
+        table = _table(
+            [1000, 1000, 1000],
+            [[(1, 1000), (1, 1000), (1, 1000)]],
+            first_row_texts=["版本", "日期", "更新\n內容"],
+        )
+        path = _write_docx(self.root, "default-layout.docx", table)
+
+        report = audit_delivery.audit_docx(path, require_default_layout=True)
+
+        self.assertEqual(report["default_layout"]["status"], "pass")
+        self.assertEqual(report["mechanical_status"], "pass")
+        self.assertNotIn("update_record_header_missing", {item["code"] for item in report["findings"]})
+
+    def test_cli_exposes_default_layout_flag_without_echoing_header_text(self) -> None:
+        table = _table(
+            [1000, 1000, 1000],
+            [[(1, 1000), (1, 1000), (1, 1000)]],
+            first_row_texts=["版本", "日期", "PRIVATE-UPDATE-CONTENT"],
+        )
+        path = _write_docx(self.root, "default-layout-cli.docx", table)
+        output = self.root / "default-layout.json"
+
+        code = audit_delivery.main([
+            "--docx", str(path),
+            "--output", str(output),
+            "--require-default-layout",
+        ])
+
+        self.assertEqual(code, 0)
+        report = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(report["default_layout"]["status"], "fail")
+        self.assertIn("update_record_header_missing", {item["code"] for item in report["findings"]})
+        self.assertNotIn("PRIVATE-UPDATE-CONTENT", output.read_text(encoding="utf-8"))
+
+    def test_default_layout_flag_rejects_generic_field_table(self) -> None:
+        table = _table(
+            [750, 750, 750, 750],
+            [[(1, 750), (1, 750), (1, 750), (1, 750)]],
+            first_row_texts=["欄位", "定義", "必填", "限制"],
+        )
+        path = _write_docx(self.root, "generic-layout.docx", table)
+
+        report = audit_delivery.audit_docx(path, require_default_layout=True)
+
+        self.assertEqual(report["default_layout"]["status"], "fail")
+        self.assertEqual(report["mechanical_status"], "failed")
+        self.assertIn("update_record_header_columns_invalid", {item["code"] for item in report["findings"]})
+        self.assertNotIn("欄位", json.dumps(report, ensure_ascii=False))
+
+    def test_default_layout_flag_is_opt_in_and_preserves_old_behavior(self) -> None:
+        table = _table(
+            [750, 750, 750, 750],
+            [[(1, 750), (1, 750), (1, 750), (1, 750)]],
+            first_row_texts=["欄位", "定義", "必填", "限制"],
+        )
+        path = _write_docx(self.root, "opt-in-layout.docx", table)
+
+        report = audit_delivery.audit_docx(path)
+
+        self.assertNotIn("default_layout", report)
+        self.assertEqual(report["mechanical_status"], "pass")
+        self.assertNotIn("update_record_header_columns_invalid", {item["code"] for item in report["findings"]})
+
+    def test_default_layout_flag_rejects_merged_header_and_empty_table(self) -> None:
+        merged = _table(
+            [1000, 1000, 1000],
+            [[(3, 3000)]],
+            first_row_texts=["版本 日期 更新內容"],
+        )
+        merged_path = _write_docx(self.root, "merged-header.docx", merged)
+        merged_report = audit_delivery.audit_docx(merged_path, require_default_layout=True)
+        self.assertEqual(merged_report["default_layout"]["status"], "fail")
+        self.assertIn("update_record_header_columns_invalid", {item["code"] for item in merged_report["findings"]})
+
+        empty = _table([1000, 1000, 1000], [])
+        empty_path = _write_docx(self.root, "empty-header.docx", empty)
+        empty_report = audit_delivery.audit_docx(empty_path, require_default_layout=True)
+        self.assertEqual(empty_report["default_layout"]["status"], "fail")
+        self.assertIn("update_record_header_row_missing", {item["code"] for item in empty_report["findings"]})
+
+    def test_default_layout_flag_skips_explicit_single_cell_table_container(self) -> None:
+        inner = _table(
+            [1000, 1000, 1000],
+            [[(1, 1000), (1, 1000), (1, 1000)]],
+            first_row_texts=["版本", "日期", "更新內容"],
+        )
+        container = _table([3000], [[(1, 3000)]])
+        first_cell = next(item for item in container.iter() if item.tag == w("tc"))
+        first_cell.append(inner)
+        path = _write_docx(self.root, "layout-container.docx", container)
+
+        report = audit_delivery.audit_docx(path, require_default_layout=True)
+
+        self.assertEqual(report["default_layout"]["status"], "pass")
 
     def test_fixed_auto_width_is_manual_review_not_failure(self) -> None:
         table = _table([1000], [[(1, 1000)]], tblw_type="auto", tblw_value=0, layout="fixed")
