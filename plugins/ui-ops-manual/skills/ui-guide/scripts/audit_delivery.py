@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Read-only structural audit for a UI-manual DOCX.
 
-This helper checks only OOXML structure and package hashes.  It deliberately
+This helper checks only OOXML structure and package hashes.  By default it
 does not read document text or image pixels, so it cannot prove redaction,
-OCR, annotation meaning, or visual correctness.  A zero exit code means that
-the audit report was written; callers use ``mechanical_status`` and
-``independent_review.status`` for delivery decisions.
+OCR, annotation meaning, or visual correctness.  Its opt-in default-layout
+gate reads only the first update-record header tokens and never reports their
+text.  A zero exit code means that the audit report was written; callers use
+``mechanical_status`` and ``independent_review.status`` for delivery decisions.
 """
 
 from __future__ import annotations
@@ -302,6 +303,114 @@ def _top_level_tables(root: ET.Element) -> tuple[list[ET.Element], bool]:
         elif _local(child) in {"sdt", "customXml"} and any(_descendants(child, "tbl")):
             wrapped = True
     return tables, wrapped
+
+
+def _cell_text(cell: ET.Element) -> str:
+    """Collect cell text for the opt-in default-layout header gate only."""
+
+    return "".join((node.text or "") for node in _descendants(cell, "t"))
+
+
+def _default_layout_table(root: ET.Element) -> ET.Element | None:
+    """Return the first body table, skipping only a structural one-cell wrapper.
+
+    A one-cell table is treated as a layout container only when it contains a
+    nested table.  A one-cell table without a nested table remains the
+    candidate and therefore fails the three-column header check.
+    """
+
+    body = _child(root, "body")
+    if body is None:
+        return None
+    table = next((child for child in list(body) if _local(child) == "tbl"), None)
+    while table is not None:
+        rows = _children(table, "tr")
+        cells = _children(rows[0], "tc") if rows else []
+        if len(cells) != 1:
+            return table
+        nested = [item for item in _descendants(cells[0], "tbl") if item is not table]
+        if not nested:
+            return table
+        table = nested[0]
+    return None
+
+
+def _default_layout_header_audit(root: ET.Element) -> tuple[str, list[str]]:
+    """Check only the default update-record header, without returning text."""
+
+    table = _default_layout_table(root)
+    if table is None:
+        return "fail", ["update_record_table_missing"]
+    rows = _children(table, "tr")
+    if not rows:
+        return "fail", ["update_record_header_row_missing"]
+    cells = _children(rows[0], "tc")
+    if len(cells) != 3:
+        return "fail", ["update_record_header_columns_invalid"]
+    normalized = [re.sub(r"\s+", "", _cell_text(cell)) for cell in cells]
+    required = ("版本", "日期", "更新內容")
+    if any(token not in value for token, value in zip(required, normalized)):
+        return "fail", ["update_record_header_missing"]
+    return "pass", []
+
+
+def _numbering_audit(numbering_root: ET.Element | None, document_root: ET.Element) -> list[dict[str, str]]:
+    """Check bounded numbering.xml structure and references without reading text."""
+
+    document_num_ids = {
+        value
+        for element in _descendants(document_root, "numId")
+        if (value := _attr(element, "val")) is not None and _integer(value) != 0
+    }
+    findings: list[dict[str, str]] = []
+    if numbering_root is None:
+        if document_num_ids or any(_attr(element, "val") is None for element in _descendants(document_root, "numId")):
+            findings.append({"code": "numbering_num_id_missing"})
+        return findings
+
+    top_level = list(numbering_root)
+    abstract_indexes = [index for index, element in enumerate(top_level) if _local(element) == "abstractNum"]
+    num_indexes = [index for index, element in enumerate(top_level) if _local(element) == "num"]
+    if abstract_indexes and num_indexes and max(abstract_indexes) > min(num_indexes):
+        findings.append({"code": "numbering_abstract_num_after_num"})
+
+    for level in _descendants(numbering_root, "lvl"):
+        child_names = [_local(child) for child in list(level)]
+        try:
+            suff_index = child_names.index("suff")
+            lvl_text_index = child_names.index("lvlText")
+        except ValueError:
+            continue
+        if suff_index > lvl_text_index:
+            findings.append({"code": "numbering_suff_after_lvl_text"})
+
+    abstract_ids = {
+        value
+        for element in top_level
+        if _local(element) == "abstractNum"
+        if (value := _attr(element, "abstractNumId")) is not None
+    }
+    num_ids = {
+        value
+        for element in top_level
+        if _local(element) == "num"
+        if (value := _attr(element, "numId")) is not None
+    }
+    for value in document_num_ids:
+        if value not in num_ids:
+            findings.append({"code": "numbering_num_id_missing"})
+            break
+    if any(_attr(element, "val") is None for element in _descendants(document_root, "numId")):
+        findings.append({"code": "numbering_num_id_missing"})
+
+    for element in top_level:
+        if _local(element) != "num":
+            continue
+        abstract_ref = _attr(_child(element, "abstractNumId"), "val")
+        if abstract_ref is None or abstract_ref not in abstract_ids:
+            findings.append({"code": "numbering_abstract_num_id_missing"})
+            break
+    return findings
 
 
 def _relationship_source(path: str) -> str:
@@ -602,7 +711,11 @@ def _independent_review(
     return result, sorted(set(reasons))
 
 
-def audit_docx(docx_path: str | Path, review_path: str | Path | None = None) -> dict[str, Any]:
+def audit_docx(
+    docx_path: str | Path,
+    review_path: str | Path | None = None,
+    require_default_layout: bool = False,
+) -> dict[str, Any]:
     """Return a safe report for a DOCX and optional independent review JSON."""
 
     docx = Path(docx_path)
@@ -626,8 +739,12 @@ def audit_docx(docx_path: str | Path, review_path: str | Path | None = None) -> 
             "image_pixels_and_redaction_not_inspected",
             "ocr_not_run",
             "visual_and_operation_not_proven_by_structure",
+            "numbering_only_checks_direct_document_numId_refs_styles_not_resolved",
         ],
     }
+    if require_default_layout:
+        report["limitations"].remove("document_text_not_inspected")
+        report["limitations"].append("document_text_only_checked_for_default_update_header_tokens")
     mechanical_status = "failed" if docx_sha256 is None else "pass"
     findings: list[dict[str, Any]] = []
     media_hashes: set[str] = set()
@@ -656,6 +773,17 @@ def audit_docx(docx_path: str | Path, review_path: str | Path | None = None) -> 
                 document_root = _parse_xml(package.read("word/document.xml"))
             except KeyError as exc:
                 raise AuditInputError("document_xml_missing") from exc
+            numbering_root: ET.Element | None = None
+            if "word/numbering.xml" in names:
+                try:
+                    numbering_root = _parse_xml(package.read("word/numbering.xml"))
+                except AuditInputError:
+                    findings.append({"code": "numbering_xml_unavailable"})
+                    mechanical_status = _combine_mechanical(mechanical_status, "failed")
+            numbering_findings = _numbering_audit(numbering_root, document_root)
+            findings.extend(numbering_findings)
+            if numbering_findings:
+                mechanical_status = _combine_mechanical(mechanical_status, "failed")
             styles_root: ET.Element | None = None
             if "word/styles.xml" in names:
                 try:
@@ -672,6 +800,14 @@ def audit_docx(docx_path: str | Path, review_path: str | Path | None = None) -> 
             if not tables:
                 findings.append({"code": "top_level_table_missing"})
                 mechanical_status = _combine_mechanical(mechanical_status, "manual_review")
+
+            if require_default_layout:
+                layout_status, layout_findings = _default_layout_header_audit(document_root)
+                report["default_layout"] = {"status": layout_status}
+                for code in layout_findings:
+                    findings.append({"code": code})
+                if layout_status == "fail":
+                    mechanical_status = _combine_mechanical(mechanical_status, "failed")
 
             for index, table in enumerate(tables, start=1):
                 alignment = _alignment(table, styles)
@@ -763,6 +899,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--docx", required=True, help="DOCX path to inspect")
     parser.add_argument("--output", required=True, help="JSON output path, or - for stdout")
     parser.add_argument("--review", help="Optional independent review JSON path")
+    parser.add_argument(
+        "--require-default-layout",
+        action="store_true",
+        help="Require the first default-layout update-record table header",
+    )
     return parser
 
 
@@ -770,7 +911,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if _output_conflicts(args.output, args.docx, args.review):
         return 2
-    report = audit_docx(args.docx, args.review)
+    report = audit_docx(args.docx, args.review, args.require_default_layout)
     try:
         _write_report(report, args.output)
     except OSError:

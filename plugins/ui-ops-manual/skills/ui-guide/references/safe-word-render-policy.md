@@ -26,6 +26,8 @@
 
 只在 Word probe／render 的**實際失敗**才進入此流程。可辨識的訊號包括 `ReasonCode: WORK_DIR_UNAVAILABLE`、Word automation failure、`[WORD_RENDER_BLOCKED]`，或 OS 顯示目錄／Automation permission denied。一般初始化不可預先詢問。
 
+若訊號是 sandbox／路徑／Automation 權限受限，先核對固定工作根目錄及暫存路徑，並在**已授權的本機互動環境**重試同一 Word 命令；這是權限修復，不是 renderer fallback。重試仍失敗後才依下列政策停止或取得明示的 LibreOffice 選擇，不得把一次受限環境直接報成 Word 不可用。
+
 1. 若 `get` 回傳 `{"mode":"remember","fallbackPolicy":"deny"}`，以 `--fallback-policy deny` 停止並回報 Word 權限問題；不再詢問，也不呼叫 LibreOffice。
 2. 若回傳 `{"mode":"remember","fallbackPolicy":"allow"}`，以 `--fallback-policy allow` 執行。Word 成功仍使用 Word；只有 Word 不可用或失敗時，才允許 Documents／LibreOffice。CJK glyph 預檢仍必須針對最後實際 renderer 完成。
 3. 若回傳 `{"mode":"ask"}`，先以 `deny` 執行；遇到上述失敗再用 `request_user_input`（可用時）或自由文字提出兩段確認：

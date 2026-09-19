@@ -6,7 +6,7 @@
 
 操作畫面預設使用**實際系統截圖**。截圖應保留真實的欄位、控制項、狀態、位置與版面關係，讓讀者能依畫面完成操作。只有使用者明示需要示意圖、重繪圖或簡化圖時，才可用生成或重繪的 UI 圖片取代實際截圖；明示要求只適用於指定的圖或範圍。
 
-取得不到適用的真實畫面時，將該畫面標為 `blocked` 或將文件標為清楚標示的 `draft`，並記錄缺少的證據。不可為了完成頁面、避免等待或配合版面，自行把示意圖當成實際畫面，也不可把重繪圖標成 screenshot。
+先依 [screenshot-completeness-workflow.md](screenshot-completeness-workflow.md) 完成端到端實測、故障排除與覆蓋追蹤。取得不到適用的真實畫面時，將該畫面標為 `blocked` 或將文件標為清楚標示的 `draft`，並記錄缺少的證據；此為中間狀態，不能省略可繼續完成的必要截圖後結束任務。不可為了完成頁面、避免等待或配合版面，自行把示意圖當成實際畫面，也不可把重繪圖標成 screenshot。
 
 每張圖在工作區保存來源分類：`captured`（本次擷取）、`provided`（使用者提供）、`reused`（舊文件沿用）或 `schematic`（經明示的示意圖）。沿用舊圖時確認畫面版本、控制項和流程仍適用；來源分類與圖說保持一致，不在文件中虛構擷取時間或來源。
 
@@ -19,7 +19,7 @@
 - 保單號、帳單號、合約號，以及同類交易、案件或文件識別碼。
 - 密碼、權杖、API key、session 值與不應外流的內部帳號或業務識別值。
 
-**金額預設不是敏感資料**，可保留以說明查詢、計算或確認結果。若使用者、資料政策或個案要求把金額列入隱碼清單，才遮蔽指定金額；圖說不得把「金額」寫成已隱碼，除非該值確實被遮蔽。
+**金額預設不是敏感資料**，可保留以說明查詢、計算或確認結果；不能只因一般業務畫面或「看起來敏感」就自行遮蔽。若使用者、資料政策或個案明確要求把金額列入隱碼清單，才遮蔽指定金額，並在 QA record 留下依據與該張 bbox；圖說不得把「金額」寫成已隱碼，除非該值確實被遮蔽。
 
 判斷以資料值及其可識別性為準，不以「看起來像數字」作為唯一條件。重複出現在頁首、彈窗、通知或其他畫面的同一識別值也屬遮蔽範圍。
 
@@ -28,19 +28,25 @@
 1. 先保留原始證據，再建立遮蔽副本。原始圖只能留在受限的 QA 工作區，不得放入交付封裝或 DOCX 媒體；敏感原值不得出現在替代文字、圖說、文件屬性、檔名或 reviewer 報告。
 2. 在像素層完成遮蔽後，才加入紅框、編號、游標及圖說。預設使用不透明色塊；可使用經 100% 檢視確認不可辨識的馬賽克。不要以 Word 浮動形狀覆蓋未處理的原圖。
 3. 對準資料值的實際邊界遮蔽，保留欄位名稱、表頭、按鈕、狀態及操作位置。不要因遮蔽方便而覆蓋整個表格或整片資訊區；只有連續區域全部是敏感內容時才遮蔽整區。
-4. 遮蔽後在 100% 與放大檢視確認：原值無法讀取、反鋸齒或邊緣沒有可重建片段、相鄰識別值沒有遺漏，且紅框仍能指向正確控制項。若遮蔽使操作位置不清楚，改取更合適的狀態或補一張局部上下文圖。
+4. 遮蔽後在 100% 與放大檢視確認：原值無法讀取、反鋸齒或邊緣沒有可重建片段、相鄰識別值沒有遺漏，且紅框仍能指向正確控制項。若遮蔽使操作位置不清楚，改取仍符合該步驟的完整頁面狀態，必要時另補局部放大圖；不能裁掉頁面上下文來避開隱碼。
 5. 將遮蔽後 PNG 扁平化再嵌入 DOCX；清理未使用的舊媒體與未遮蔽副本。檔名、caption、manifest 與 reviewer evidence 只記錄類別、座標、雜湊或不含值的定位資訊，不能記錄原始敏感值。
 
 ## 遮蔽 manifest
 
-每張有遮蔽的圖片都建立一份與 raw、redacted、annotated 圖對應的 manifest。manifest 的 `status` 是製作／檢查狀態，不能代替獨立交付審核；交付審核格式見 [independent-delivery-review.md](independent-delivery-review.md)。
+每張圖片都建立一份 [screenshot-manifest.md](screenshot-manifest.md) 的統一 manifest，無敏感值時也要保存 redacted 副本（可與 raw 像素相同但必須是不同檔案）及 `noSensitiveDataReason`。manifest 的 `reviewStatus` 和每筆項目狀態是製作／檢查狀態，不能代替獨立交付審核；交付審核格式見 [independent-delivery-review.md](independent-delivery-review.md)。
 
 ```json
 {
+  "schema_version": 1,
   "sourceImage": "evidence/raw-001.png",
+  "sourceSha256": "<sha256-of-this-raw-png>",
   "sourceKind": "captured",
   "redactedImage": "evidence/redacted-001.png",
+  "annotatedImage": "evidence/annotated-001.png",
   "originalImageSize": { "width": 1920, "height": 1080 },
+  "captureKind": "full-page",
+  "captureState": { "id": "screen-state-01", "rawSha256": "<same-sha256>" },
+  "reviewStatus": "pending",
   "redactions": [
     {
       "category": "policy-number",
@@ -48,11 +54,16 @@
       "method": "opaque-rectangle",
       "status": "pending"
     }
-  ]
+  ],
+  "annotations": []
 }
 ```
 
-`category` 使用資料類別，不放原值；`bbox` 使用原始 PNG 座標。`status` 可為 `pending`、`checked` 或 `blocked`，而 `checked` 只表示遮蔽檢查已完成。將 raw 圖與 redacted 圖並排 100% 檢視後，才可把相應項目標為 `checked`。
+`category` 使用資料類別，不放原值；`bbox` 使用原始 PNG 座標。每張圖的 `sourceSha256` 必須與實際 raw PNG 相符，`captureState.rawSha256` 必須相同；每次重截都要重新生成狀態、hash 和該圖座標，不可跨頁套用固定列距。`status` 可為 `pending`、`checked` 或 `blocked`，而 `checked` 只表示遮蔽檢查已完成。將 raw 圖與 redacted 圖並排 100% 檢視後，才可把相應項目標為 `checked`。`annotatedImage` 的每筆 annotation 另需非空 `id`、`caption`、`controlName`、`source`、合法 bbox 和 `pending`／`verified`／`checked`／`blocked` 狀態；狀態不可省略或由工具預填核可。
+
+如 CUA screenshot 契約回傳 `Uint8Array`，可在同一 Node runtime 使用 `fs/promises.writeFile` 保存到受限 QA 工作區，再計算 hash；不要杜撰 API、把瀏覽器控制當成檔案保存限制，或使用生成／重繪 UI 取代實機來源。工具允許時，優先以目前 capture 的 DOM element 或文字 `Range.getBoundingClientRect()` 測量實際值邊界，只保存數值 bbox，不回傳原值；DOM 不可用時不得猜測座標。
+
+在 DOCX 建置前逐份執行 [screenshot-manifest.md](screenshot-manifest.md) 的 `validate_screenshot_manifest.py` 命令。它只驗檔案 hash、PNG 尺寸、bbox 幾何、protected area 交疊及欄位／狀態格式；不驗像素是否真的遮蔽，也不驗 caption 語意。`geometry_status` 通過不代表隱碼完成；pending 的 `manifest_status` 必須保持 blocked，且仍要由 builder 逐張檢視和 independent reviewer 直接審核。
 
 ## 檢查邊界與失敗處理
 

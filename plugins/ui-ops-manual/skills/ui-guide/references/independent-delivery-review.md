@@ -8,10 +8,13 @@
 
 reviewer 直接讀取下列輸入：
 
-- 使用者需求、已確認的範圍與目前 `ui-guide` 規範。
+- 使用者需求、已確認的範圍、逐功能覆蓋表與目前 `ui-guide` 規範；依 [screenshot-completeness-workflow.md](screenshot-completeness-workflow.md) 比對每項必要操作／狀態的主圖及文件位置。
 - 最終 DOCX 與其最終 renderer 產生的頁面圖片。
 - 交付文件中使用的 redacted／annotated 圖片及其 manifest。
+- 每張圖片的 `validate_screenshot_manifest.py` 報告；它只作 hash／尺寸／bbox 的機械證據，不能取代 reviewer 對圖片內容的直接檢視。
 - 受限 QA 工作區的原始證據，用來比對來源與遮蔽完整性。
+
+每輪 review 都依 [incremental-qa-workflow.md](incremental-qa-workflow.md) 保留唯一累積 finding ledger；將上一輪未解缺陷與新 findings 合併後區分阻擋項與非阻擋項，逐項標記修正證據，再按依賴重新檢查受影響清單。阻擋項未修正或證據不足時不得 pass；不影響主要流程的非阻擋項可在 `reason`／`evidence` 記為 accepted limitation，保留可用成品。最新訊息或最新檔案不能自動清除先前未解的缺陷。
 
 原始圖片可供 reviewer 在受限工作區讀取，但不得複製到交付封裝、DOCX 或 review artifact 內容；敏感原值不得出現在 caption、替代文字、metadata、檔名或報告文字。報告只寫不含原值的類別、雜湊、檔案識別與定位資訊。
 
@@ -21,12 +24,14 @@ reviewer 直接讀取下列輸入：
 
 | 檢查 | reviewer 要直接確認的內容 |
 | --- | --- |
-| `requirements` | 需求、範圍、章節順序、入口、步驟、欄位表、成功影響與操作後檢核是否完整且相符。 |
+| `requirements` | 需求、範圍、章節順序、入口、步驟、欄位表、成功影響與操作後檢核是否完整且相符；每個欄位／表頭／必填標記／可見選項都能由具體 capture id 與 manifest source 回溯。 |
 | `redaction` | 實際畫面來源是否適用；身分 ID、地址、保單號、帳單號、合約號等預設敏感值是否逐一遮蔽；金額是否依預設保留或依明示要求遮蔽；欄名與操作目標仍可辨識。 |
 | `visual` | 最終頁面中的字型、標題層級、表格與圖片相對關係、表格在容器可用內容區的置中、分頁、裁切與圖說是否符合視覺標準。 |
 | `operation` | 每個紅框／編號／caption 是否指向正確控制項；步驟、畫面狀態、成功／失敗／取消行為與檢核方式是否可按實際畫面完成。 |
 
-reviewer 依原始證據和成品逐項判斷，不把 OCR、像素差異、DOCX 結構或腳本 exit code 當成隱碼或視覺 pass 的替代品。發現任何一項 `fail` 時，overall result 為 `fail`；證據不足或無法檢視時為 `blocked`，不可用猜測補成 `pass`。
+reviewer 依原始證據和成品逐項判斷，不把 OCR、像素差異、DOCX 結構或腳本 exit code 當成隱碼或視覺 pass 的替代品。發現阻擋項或任何一項 `fail` 時，overall result 為 `fail`；證據不足或無法檢視時為 `blocked`，不可用猜測補成 `pass`。非阻擋的措辭精緻度、次要欄位深度或輕微美觀限制，可維持該 check 為 `pass`，並在 `reason`／`evidence` 記錄 accepted limitation。
+
+阻擋項包括錯誤或誤導操作、主要流程或關鍵實圖缺失、敏感值漏遮、遮住控制項或使其無法辨識，以及內容不可讀；這些項目未解時不能以可用基底或 accepted limitation 取代。連續同類返工沒有有效改善時，停止相同策略，改做最小局部修復、依使用者已明示的範圍縮限，或如實回報阻擋，不得無限重建或把有阻擋的成品標為 pass。
 
 ## 必測的回歸紅案例
 
@@ -34,9 +39,16 @@ reviewer 依原始證據和成品逐項判斷，不把 OCR、像素差異、DOCX
 
 | 情境 | 判定 |
 | --- | --- |
+| 要求完整手冊卻無截圖，或只補少量功能截圖後結束 | `requirements` 為 `fail`；不能以 draft 或後續補件建議免除已授權工作。 |
+| 只有單一欄位／按鈕裁切圖，沒有完整頁面主圖 | `operation` 與 `requirements` 為 `fail`；局部圖只能補充主圖。 |
+| 只驗收已嵌入圖片，未比對全部確認範圍；或缺少最終渲染頁面 | 證據不足為 `blocked`，已證實缺件為 `fail`；不能以圖片 hash 或結構 pass 宣稱整本完成。 |
+| 每張圖沒有自己的 capture state／source hash，或把前一張圖固定座標套到另一狀態 | `redaction` 或 `operation` 為 `blocked`／`fail`；同尺寸不代表同一畫面，必須回到該張 raw 重新測量。 |
+| redaction bbox 與 manifest 的 protected label／button area 正面積交疊 | `redaction` 為 `fail`；若 protected area 本身過度涵蓋敏感值，builder 必須先縮小它並重新檢視。 |
+| 欄位／表頭未出現在任何原始證據卻被加入、已知必填標記與文件矛盾，或泛用描述使不同項目的用途／限制無法辨識而造成誤導 | `requirements` 為 `fail`；移除虛構項目、修正必填狀態，並以實際畫面重寫各欄用途。單純措辭不夠精緻但仍可正確操作，可記為 accepted limitation。 |
+| 圖說／紅框編號與目前 annotated manifest 的 annotation id 不一致，或重複編號造成讀者無法判斷當步目標 | `operation` 為 `fail`；回到該張 capture 重新對齊，不沿用舊圖的 mapping。單純文字重複但目標仍明確可辨識，可記為 accepted limitation。 |
 | 沒有使用者明示卻以重繪／生成 UI 取代實際截圖 | `redaction` 或 `requirements` 為 `fail`。 |
 | 身分 ID、地址、保單號、帳單號或合約號在成品中可讀 | `redaction` 為 `fail`；金額依預設保留本身不是失敗。 |
-| 表格寬度依內容變動，但仍以容器可用內容區置中 | `visual` 通過；產製器變動造成表格靠左則 `visual` 為 `fail`。 |
+| 表格寬度依內容變動，但仍以容器可用內容區置中 | `visual` 通過；輕微偏移但仍可讀且不影響操作可記為 accepted limitation，只有偏移造成內容不可讀、控制項／欄位誤導或超出容器才 `visual` 為 `fail`。 |
 | builder 宣稱 `verified`、舊 artifact 或任一 reviewed file hash 與現檔不符 | `overall` 不得為 `pass`；證據不足或 reviewer 尚未完成時為 `blocked`。 |
 
 ## Review artifact schema
@@ -104,8 +116,8 @@ reviewer 依原始證據和成品逐項判斷，不把 OCR、像素差異、DOCX
 
 ### Pending 與結果規則
 
-- `overall: "pass"`：reviewer id 已填入，四項適用檢查均為 `pass` 或有明確 `na`，artifact 與所有 `reviewed_files` hashes 相符。
-- `overall: "fail"`：任一檢查為 `fail`，或驗收後發現成品仍含敏感值、錯誤標註或版面缺陷。
+- `overall: "pass"`：reviewer id 已填入，四項適用檢查均為 `pass` 或有明確 `na`，artifact 與所有 `reviewed_files` hashes 相符；非阻擋 limitation 可寫在相關 check 的 `reason`／`evidence`，不另造 status 值。
+- `overall: "fail"`：任一檢查為 `fail`，或驗收後發現阻擋項、敏感值仍在成品中、錯誤標註或內容不可讀。
 - `overall: "blocked"`：reviewer 尚未完成、原始證據不可讀、必要頁面／圖片缺失或任一雜湊無法比對。無 reviewer 時將 `reviewer.id` 設為 `pending`，並在報告及交付對話寫明 `independent review pending`。
 - 審核 pending 時，應持續完成所有不依賴 reviewer 的已授權工作；若需要交付目前產物，將檔名、資料夾或交付對話清楚標示 `draft`。`draft` 是交付狀態，不是 `overall` 值，也不得宣稱已完成審核。
 
@@ -116,13 +128,15 @@ reviewer 依原始證據和成品逐項判斷，不把 OCR、像素差異、DOCX
 使用 [audit_delivery.py](../scripts/audit_delivery.py) 產生唯讀結構報告，再交給 reviewer 與其他證據一起判讀：
 
 ```text
-<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure.json"
+<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure.json" --require-default-layout
 ```
+
+本次接受 plugin 預設且沒有自訂版型時，上述兩次命令都要加 `--require-default-layout`，第二次必須沿用第一次的選擇；它只檢查 body 第一個資料表（必要時跳過明確的單格巢狀 layout container）首列是否為三欄 `版本`／`日期`／`更新內容`。使用者明示改變更新紀錄位置或表頭時，兩次命令都可省略，但要在 QA record 記錄理由。這個 opt-in gate 只產生機械 failure code，不證明表格完整格式、更新內容或其他文件語意。
 
 reviewer 完成上述 review JSON 後，再檢查紀錄與檔案是否一致：
 
 ```text
-<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --output "<qa>/review-validation.json"
+<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --output "<qa>/review-validation.json" --require-default-layout
 ```
 
 第二次輸出使用不同檔名，不能覆寫已被 review JSON 引用及計算雜湊的 `structure.json`。工具的 `mechanical_status` 表示結構檢查結果，`independent_review.status` 表示審核紀錄的完整性與檔案綁定檢查；兩者都不等於工具親自完成內容或視覺審核。`manual_review` 項目交由 reviewer 判讀，`failed` 項目需修正，或由 reviewer 核實是否屬使用者／版型已明示的合法例外並記錄依據。例如動態表寬與合法合併儲存格不應僅因無法機械判定就永遠卡住交付。

@@ -22,6 +22,7 @@
 - 以頁面邊界、欄位、容器內距及適用頁首頁尾扣除後的**容器可用內容區**作為對齊基準。它不是整頁最大寬度。
 - 表格預設相對於所在容器可用內容區置中。建置時明確設定表格對齊、段落／容器縮排與寬度關係，不依賴 Word 或文件函式庫的預設值；這可避免內建邏輯變動後表格漂移到左側。
 - 表格總寬、欄寬及列高依內容與版型彈性調整，只要落在容器可用內容區；不採固定像素，也不要求每張表填滿可用區。等寬不是預設條件，同類表格應共用置中基準、表頭、框線與內距。
+- 表格可用寬先由 section 的頁面寬度扣除左右 margin 算出；`tblW`、`tblGrid` 的欄寬總和及每列 `tcW` 必須一致，且不得超過該容器可用寬（例如可用寬 7.2 in 時，最後表格不可變成 7.65 in）。不同欄寬可以依內容配置，等寬不是必要條件。
 - 圖片、圖說與提示框依所在容器的對齊規則排版。較窄的元件保留大致相等的左右剩餘空間；只有明確指定時才靠左或靠右。
 
 表格或圖片的寬度差異只要有內容或版型依據即可。結構檢查確認對齊屬性與尺寸落在容器內；最終 renderer 的逐頁檢視確認沒有靠左漂移、裁切、圖說分離或文字截斷。完整判準見 [visual-consistency-standard.md](visual-consistency-standard.md)。
@@ -33,3 +34,31 @@
 - 每章包含入口位置、操作流程、欄位與按鈕說明、修改成功後的影響、操作後檢核。圖說位於截圖下方。
 - 每個操作小節的 Word 清單獨立重啟，顯示「步驟 1、步驟 2…」。紅框編號只用於同張圖內的控制項對照。
 - 欄位／按鈕表最少使用「欄位或控制項、定義、必填、限制／選項」四欄；必要時加「顯示條件／結果」。
+
+### 真正的 Word 編號清單
+
+每個操作小節建立自己的真正 Word numbering definition；不要把 `1.`、`2.` 寫成普通文字。實作時為每節建立獨立的 `abstractNum` 與 `num`，`nsid`、`abstractNumId`、`numId` 都不可與其他小節重複；每個使用的 level 都要在該 `num` 加 `w:lvlOverride`／`w:startOverride w:val="1"`。只換 `numId` 仍可能因共用 definition 而接續前一節。
+
+以下是已用 Word renderer 驗證過的最小 OOXML pattern（id 只是假值；產生器必須動態配置）。`numbering.xml` 中所有 `abstractNum` 必須位於所有 `num` 前；`w:suff` 必須位於 `w:lvlText` 前，並將該小節每個步驟段落的 `w:numPr` 指向這個 `numId`／`ilvl`：
+
+```xml
+<w:abstractNum w:abstractNumId="101">
+  <w:nsid w:val="A1B2C3D4"/>
+  <w:multiLevelType w:val="singleLevel"/>
+  <w:lvl w:ilvl="0">
+    <w:start w:val="1"/><w:numFmt w:val="decimal"/>
+    <w:suff w:val="space"/><w:lvlText w:val="步驟 %1"/>
+  </w:lvl>
+</w:abstractNum>
+<w:num w:numId="201">
+  <w:abstractNumId w:val="101"/>
+  <w:lvlOverride w:ilvl="0">
+    <w:startOverride w:val="1"/>
+    <!-- same w:lvl definition as above -->
+  </w:lvlOverride>
+</w:num>
+```
+
+交付前可用 `scripts/audit_delivery.py` 唯讀檢查上述次序與 `numId`／`abstractNumId` 引用是否存在；它不判斷小節分組或 renderer 是否實際從 1 起，仍須按最新 render 檢視。
+
+建置後以實際 Word renderer 檢查每個小節第一個可見步驟都是「1」、後續依序增加、下一節重新從「1」開始；XML 結構檢查或純文字前綴都不能取代這項驗證。若最新 render 仍續號，回到該 renderer 的 numbering definition 重新建立與驗證。
