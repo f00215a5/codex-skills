@@ -256,6 +256,57 @@ class TableLayoutPolicyTests(unittest.TestCase):
             self.assertNotEqual(verify.returncode, 0)
             self.assertIn("explicit center alignment", verify.stdout)
 
+    def test_audit_allows_autofit_percentage_width_without_mixing_units(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            image = work / "annotated" / "step.png"
+            image.parent.mkdir()
+            Image.new("RGB", (100, 60), "white").save(image)
+            manifest_path = work / "manual.json"
+            manifest_path.write_text(json.dumps(minimal_manifest(), ensure_ascii=False), encoding="utf-8")
+            output = work / "manual.docx"
+            self.assertEqual(run(BUILD, "--manifest", str(manifest_path), "--output", str(output)).returncode, 0)
+            pct = work / "pct.docx"
+            with zipfile.ZipFile(output, "r") as source, zipfile.ZipFile(pct, "w") as destination:
+                for item in source.infolist():
+                    payload = source.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        payload = payload.replace(
+                            b'<w:tblW w:type="auto" w:w="0"/>',
+                            b'<w:tblW w:type="pct" w:w="5000"/>',
+                        )
+                    destination.writestr(item, payload)
+            report_path = work / "audit.json"
+            self.assertEqual(run(AUDIT, "--docx", str(pct), "--output", str(report_path)).returncode, 0)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["tables"][0]["width"]["status"], "pass")
+            self.assertEqual(report["tables"][0]["grid"]["status"], "pass")
+
+    def test_audit_rejects_invalid_percentage_width(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            image = work / "annotated" / "step.png"
+            image.parent.mkdir()
+            Image.new("RGB", (100, 60), "white").save(image)
+            manifest_path = work / "manual.json"
+            manifest_path.write_text(json.dumps(minimal_manifest(), ensure_ascii=False), encoding="utf-8")
+            output = work / "manual.docx"
+            self.assertEqual(run(BUILD, "--manifest", str(manifest_path), "--output", str(output)).returncode, 0)
+            invalid = work / "invalid-pct.docx"
+            with zipfile.ZipFile(output, "r") as source, zipfile.ZipFile(invalid, "w") as destination:
+                for item in source.infolist():
+                    payload = source.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        payload = payload.replace(
+                            b'<w:tblW w:type="auto" w:w="0"/>',
+                            b'<w:tblW w:type="pct" w:w="6000"/>',
+                        )
+                    destination.writestr(item, payload)
+            report_path = work / "invalid-audit.json"
+            self.assertEqual(run(AUDIT, "--docx", str(invalid), "--output", str(report_path)).returncode, 0)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["tables"][0]["width"]["status"], "fail")
+
     def test_builder_rejects_raw_image_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
@@ -272,9 +323,86 @@ class TableLayoutPolicyTests(unittest.TestCase):
 
 class LiteAuditPolicyTests(unittest.TestCase):
     def _audit_fixture(self, work: Path) -> dict:
+        raw_image = work / "raw" / "step.png"
+        redacted_image = work / "redacted" / "step.png"
         image = work / "annotated" / "step.png"
+        raw_image.parent.mkdir()
+        redacted_image.parent.mkdir()
         image.parent.mkdir()
-        Image.new("RGB", (100, 60), "white").save(image)
+        Image.new("RGB", (100, 60), "white").save(raw_image)
+        screenshot_path = work / "screenshot.json"
+        screenshot = {
+            "schema_version": 1,
+            "sourceImage": "raw/step.png",
+            "sourceSha256": sha256(raw_image),
+            "redactedImage": "redacted/step.png",
+            "annotatedImage": "annotated/step.png",
+            "sourceKind": "captured",
+            "captureKind": "full-page",
+            "captureState": {
+                "id": "audit-fixture-01",
+                "rawSha256": sha256(raw_image),
+                "viewportCssSize": {"width": 100, "height": 60},
+                "scroll": {"x": 0, "y": 0},
+                "calibration": {
+                    "mode": "known-control",
+                    "pngSize": {"width": 100, "height": 60},
+                    "viewportCssSize": {"width": 100, "height": 60},
+                    "knownControl": {"bbox": {"x": 20, "y": 15, "width": 20, "height": 15}},
+                },
+            },
+            "originalImageSize": {"width": 100, "height": 60},
+            "protectedAreas": [],
+            "redactions": [{
+                "category": "policy-number",
+                "bbox": {"x": 1, "y": 1, "width": 2, "height": 2},
+                "method": "opaque-rectangle",
+                "status": "checked",
+            }],
+            "annotations": [{
+                "id": "1",
+                "controlName": "查詢",
+                "caption": "紅框 1：查詢按鈕。",
+                "bbox": {"x": 20, "y": 15, "width": 20, "height": 15},
+                "source": "dom-derived",
+                "provenance": "dom-derived",
+                "status": "verified",
+            }],
+            "reviewStatus": "checked",
+        }
+        screenshot_path.write_text(json.dumps(screenshot, ensure_ascii=False), encoding="utf-8")
+        redaction = run(
+            REDACT,
+            "draw",
+            "--image",
+            str(raw_image),
+            "--manifest",
+            str(screenshot_path),
+            "--output",
+            str(redacted_image),
+            "--provenance-output",
+            str(work / "redaction-provenance.json"),
+        )
+        self.assertEqual(redaction.returncode, 0, redaction.stderr)
+        screenshot["redactedSha256"] = sha256(redacted_image)
+        screenshot["redactionProvenance"] = "redaction-provenance.json"
+        screenshot_path.write_text(json.dumps(screenshot, ensure_ascii=False), encoding="utf-8")
+        annotation = run(
+            ANNOTATE,
+            "draw",
+            "--image",
+            str(redacted_image),
+            "--annotations",
+            str(screenshot_path),
+            "--output",
+            str(image),
+            "--provenance-output",
+            str(work / "annotation-provenance.json"),
+        )
+        self.assertEqual(annotation.returncode, 0, annotation.stderr)
+        screenshot["annotatedSha256"] = sha256(image)
+        screenshot["annotationProvenance"] = "annotation-provenance.json"
+        screenshot_path.write_text(json.dumps(screenshot, ensure_ascii=False), encoding="utf-8")
         manifest_path = work / "手冊-manual.json"
         manifest_path.write_text(json.dumps(minimal_manifest(), ensure_ascii=False), encoding="utf-8")
         output = work / "manual.docx"
@@ -479,6 +607,72 @@ class LiteAuditPolicyTests(unittest.TestCase):
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertNotEqual(report["independent_review"]["status"], "pass")
             self.assertIn("render_visual_must_not_pass", report["independent_review"]["reason_codes"])
+
+    def test_lite_audit_binds_each_media_image_to_redaction_annotation_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self._audit_fixture(Path(directory))
+            build_payload = json.loads(fixture["build_manifest"].read_text(encoding="utf-8"))
+            build_payload["chapter"]["entry"]["evidence"] = {
+                "redactionManifest": "screenshot.json",
+                "annotationManifest": "screenshot.json",
+                "provenance": "redaction-provenance.json",
+                "annotationProvenance": "annotation-provenance.json",
+            }
+            fixture["build_manifest"].write_text(json.dumps(build_payload), encoding="utf-8")
+            payload = copy.deepcopy(fixture["review"])
+            payload["reviewed_files"].append({
+                "kind": "support", "role": "screenshot_manifest", "path": "screenshot.json",
+                "sha256": sha256(fixture["work"] / "screenshot.json"),
+            })
+            payload["reviewed_files"].append({
+                "kind": "support", "role": "redaction_provenance", "path": "redaction-provenance.json",
+                "sha256": sha256(fixture["work"] / "redaction-provenance.json"),
+            })
+            payload["reviewed_files"].append({
+                "kind": "support", "role": "annotation_provenance", "path": "annotation-provenance.json",
+                "sha256": sha256(fixture["work"] / "annotation-provenance.json"),
+            })
+            for item in payload["reviewed_files"]:
+                if item.get("path") == fixture["build_manifest"].name:
+                    item["sha256"] = sha256(fixture["build_manifest"])
+            payload["imageEvidence"] = [{
+                "image": "annotated/step.png",
+                "redactionManifest": "screenshot.json",
+                "annotationManifest": "screenshot.json",
+                "provenance": "redaction-provenance.json",
+                "annotationProvenance": "annotation-provenance.json",
+            }]
+            valid = self._run_review_case(
+                fixture, "per-image-chain", payload, manifest=fixture["build_manifest"]
+            )
+            self.assertEqual(valid["status"], "pass")
+            self.assertEqual(valid["image_evidence_chain"]["status"], "pass")
+
+            broken = copy.deepcopy(payload)
+            broken["imageEvidence"][0].pop("provenance")
+            blocked = self._run_review_case(
+                fixture, "per-image-chain-missing-provenance", broken, manifest=fixture["build_manifest"]
+            )
+            self.assertNotEqual(blocked["status"], "pass")
+            self.assertIn("image_evidence_chain_provenance_missing", blocked["reason_codes"])
+
+            broken_annotation = copy.deepcopy(payload)
+            broken_annotation["imageEvidence"][0].pop("annotationProvenance")
+            blocked_annotation = self._run_review_case(
+                fixture, "per-image-chain-missing-annotation-provenance", broken_annotation,
+                manifest=fixture["build_manifest"],
+            )
+            self.assertNotEqual(blocked_annotation["status"], "pass")
+
+            unrelated = copy.deepcopy(payload)
+            unrelated["imageEvidence"][0]["provenance"] = "需求範圍.md"
+            unrelated["imageEvidence"][0]["annotationProvenance"] = "需求範圍.md"
+            blocked_unrelated = self._run_review_case(
+                fixture, "per-image-chain-unrelated-support", unrelated,
+                manifest=fixture["build_manifest"],
+            )
+            self.assertNotEqual(blocked_unrelated["status"], "pass")
+            self.assertTrue(any("not_manifest_provenance" in code for code in blocked_unrelated["reason_codes"]))
 
 
 if __name__ == "__main__":

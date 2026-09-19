@@ -138,6 +138,50 @@ class AnnotateCheckTests(unittest.TestCase):
             with Image.open(output) as annotated, Image.open(raw) as source:
                 self.assertNotEqual(annotated.tobytes(), source.tobytes())
 
+    def test_optional_badge_position_can_move_away_from_adjacent_control(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            raw = workspace / "raw.png"
+            output = workspace / "annotated.png"
+            make_raw_image(raw)
+            ann = manifest_for("raw.png", [{
+                "id": "1",
+                "controlName": "查詢",
+                "caption": "紅框 1：查詢按鈕。",
+                "bbox": {"x": 120, "y": 70, "width": 60, "height": 24},
+                "badgePosition": {"x": 215, "y": 20},
+                "status": "verified",
+            }])
+            manifest_path = workspace / "annotations.json"
+            manifest_path.write_text(json.dumps(ann, ensure_ascii=False), encoding="utf-8")
+
+            result = self.run_tool("draw", raw, manifest_path, "--output", str(output))
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.exists())
+
+    def test_badge_position_outside_image_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            raw = workspace / "raw.png"
+            output = workspace / "annotated.png"
+            make_raw_image(raw)
+            ann = manifest_for("raw.png", [{
+                "id": "1",
+                "controlName": "查詢",
+                "caption": "紅框 1：查詢按鈕。",
+                "bbox": {"x": 120, "y": 70, "width": 60, "height": 24},
+                "badgePosition": {"x": 315, "y": 195},
+                "status": "verified",
+            }])
+            manifest_path = workspace / "annotations.json"
+            manifest_path.write_text(json.dumps(ann, ensure_ascii=False), encoding="utf-8")
+
+            result = self.run_tool("check", raw, manifest_path)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("badge position", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

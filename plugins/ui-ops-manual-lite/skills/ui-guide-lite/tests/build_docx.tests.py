@@ -5,10 +5,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PIL import Image
 from docx import Document
+from docx.oxml.ns import qn
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 BUILD_SCRIPT = SCRIPTS / "build_docx.py"
@@ -165,6 +168,144 @@ class BuildAndVerifyTests(unittest.TestCase):
             [cell.text for cell in document.tables[0].rows[0].cells][:3],
             ["版本", "日期", "更新內容"],
         )
+
+    def test_chapters_list_builds_and_verifies_each_chapter(self) -> None:
+        manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        chapter = manifest.pop("chapter")
+        second = json.loads(json.dumps(chapter))
+        second["title"] = "付款管理功能"
+        second["entry"]["caption"] = "功能入口：付款管理。"
+        manifest["chapters"] = [chapter, second]
+        self.manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+        verify = self.build_and_verify()
+
+        self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+        document = Document(self.docx_path)
+        headings = [paragraph.text for paragraph in document.paragraphs if paragraph.style.name.startswith("Heading")]
+        self.assertIn("訂單管理功能", headings)
+        self.assertIn("付款管理功能", headings)
+
+    def test_numbering_definitions_are_unique_and_reset_with_override(self) -> None:
+        self.build_and_verify()
+        with zipfile.ZipFile(self.docx_path) as archive:
+            numbering = archive.read("word/numbering.xml").decode("utf-8")
+        self.assertGreaterEqual(numbering.count("<w:abstractNum "), 3)
+        self.assertGreaterEqual(numbering.count("<w:num "), 3)
+        self.assertIn("<w:startOverride w:val=\"1\"/>", numbering)
+        self.assertIn("<w:suff w:val=\"space\"/><w:lvlText", numbering)
+
+    def test_image_and_table_flow_properties_are_explicit(self) -> None:
+        self.build_and_verify()
+        document = Document(self.docx_path)
+        image_paragraphs = [paragraph for paragraph in document.paragraphs if paragraph._p.xpath(".//a:blip")]
+        self.assertTrue(image_paragraphs)
+        for paragraph in image_paragraphs:
+            p_pr = paragraph._p.find(qn("w:pPr"))
+            self.assertIsNotNone(p_pr)
+            self.assertIsNotNone(p_pr.find(qn("w:keepNext")))
+        self.assertTrue(document.tables)
+        for table in document.tables:
+            header_pr = table.rows[0]._tr.find(qn("w:trPr"))
+            self.assertIsNotNone(header_pr)
+            self.assertIsNotNone(header_pr.find(qn("w:tblHeader")))
+            for row in table.rows:
+                row_pr = row._tr.find(qn("w:trPr"))
+                self.assertIsNotNone(row_pr)
+                self.assertIsNotNone(row_pr.find(qn("w:cantSplit")))
+
+    def test_verify_rejects_final_inline_extent_over_container(self) -> None:
+        self.build_and_verify()
+        tampered = self.workspace / "oversized-inline.docx"
+        namespace = {
+            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+        }
+        with zipfile.ZipFile(self.docx_path, "r") as source, zipfile.ZipFile(tampered, "w") as destination:
+            for item in source.infolist():
+                payload = source.read(item.filename)
+                if item.filename == "word/document.xml":
+                    root = ET.fromstring(payload)
+                    extent = root.find(".//wp:inline/wp:extent", namespace)
+                    self.assertIsNotNone(extent)
+                    extent.set("cx", "999999999")
+                    ET.register_namespace("w", namespace["w"])
+                    ET.register_namespace("wp", namespace["wp"])
+                    payload = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                destination.writestr(item, payload)
+        verify = run(VERIFY_SCRIPT, "--docx", str(tampered), "--manifest", str(self.manifest_path))
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("inline image extents", verify.stdout)
+
+    def test_verify_reports_exact_row_height_as_layout_risk(self) -> None:
+        self.build_and_verify()
+        tampered = self.workspace / "exact-row-height.docx"
+        namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        with zipfile.ZipFile(self.docx_path, "r") as source, zipfile.ZipFile(tampered, "w") as destination:
+            for item in source.infolist():
+                payload = source.read(item.filename)
+                if item.filename == "word/document.xml":
+                    root = ET.fromstring(payload)
+                    row = root.find(".//w:tbl/w:tr", namespace)
+                    self.assertIsNotNone(row)
+                    tr_pr = row.find("w:trPr", namespace)
+                    if tr_pr is None:
+                        tr_pr = ET.Element(qn("w:trPr"))
+                        row.insert(0, tr_pr)
+                    height = ET.SubElement(tr_pr, qn("w:trHeight"))
+                    height.set(qn("w:val"), "100")
+                    height.set(qn("w:hRule"), "exact")
+                    ET.register_namespace("w", namespace["w"])
+                    payload = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                destination.writestr(item, payload)
+        verify = run(VERIFY_SCRIPT, "--docx", str(tampered), "--manifest", str(self.manifest_path))
+        self.assertEqual(verify.returncode, 0, verify.stdout or verify.stderr or "")
+        self.assertIn("[RISK] table rows use exact fixed heights", verify.stdout)
+
+    def test_verify_rejects_operation_list_without_start_override(self) -> None:
+        self.build_and_verify()
+        document = Document(self.docx_path)
+        operation_num_ids: list[str] = []
+        for paragraph in document.paragraphs:
+            num_pr = paragraph._p.find(qn("w:pPr") + "/" + qn("w:numPr"))
+            if num_pr is None:
+                continue
+            num_id = num_pr.find(qn("w:numId"))
+            if num_id is not None and num_id.get(qn("w:val")) and "紅框" in paragraph.text:
+                operation_num_ids.append(num_id.get(qn("w:val")))
+        self.assertTrue(operation_num_ids)
+        target_num_id = operation_num_ids[0]
+        tampered = self.workspace / "tampered.docx"
+        with zipfile.ZipFile(self.docx_path, "r") as source, zipfile.ZipFile(tampered, "w") as destination:
+            for item in source.infolist():
+                payload = source.read(item.filename)
+                if item.filename == "word/numbering.xml":
+                    root = ET.fromstring(payload)
+                    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                    target = next(
+                        node for node in root.findall("w:num", namespace)
+                        if node.get(qn("w:numId")) == target_num_id
+                    )
+                    override = target.find("w:lvlOverride", namespace)
+                    self.assertIsNotNone(override)
+                    start = override.find("w:startOverride", namespace)
+                    self.assertIsNotNone(start)
+                    override.remove(start)
+                    ET.register_namespace("w", namespace["w"])
+                    payload = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+                destination.writestr(item, payload)
+        verify = run(VERIFY_SCRIPT, "--docx", str(tampered), "--manifest", str(self.manifest_path))
+        self.assertNotEqual(verify.returncode, 0)
+        self.assertIn("startOverride", verify.stdout)
+
+    def test_tall_image_fails_with_continuation_guidance(self) -> None:
+        tall = self.images / "step1.png"
+        Image.new("RGB", (300, 1800), "#F7FFFC").save(tall)
+
+        build = run(BUILD_SCRIPT, "--manifest", str(self.manifest_path), "--output", str(self.docx_path))
+
+        self.assertNotEqual(build.returncode, 0)
+        self.assertIn("continuation", build.stderr.lower())
 
 
 if __name__ == "__main__":

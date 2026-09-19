@@ -1,15 +1,15 @@
 {
   "name": "ui-ops-manual-lite",
-  "version": "0.4.0+codex.20260916081121",
-  "description": "Create verified system UI operation manuals with annotated screenshots. Python-only local venv and structure QA; no external document engine.",
+  "version": "0.5.0",
+  "description": "Create verified system UI operation manuals with traceable real screenshots, annotated controls, and Python-only DOCX structure QA; no external document engine.",
   "author": {
     "name": "Derick"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "UI \u64cd\u4f5c\u8aaa\u660e\u66f8\uff08\u8f15\u91cf\u7248\uff09",
-    "shortDescription": "Python-only UI manuals with screenshots.",
-    "longDescription": "Create system UI operation manuals with annotated controls, field definitions, task flows, and programmatic structure QA. python-docx and Pillow run inside a local Python venv; no external document engine is required.",
+    "shortDescription": "Python-only UI manuals with traceable screenshots.",
+    "longDescription": "Create system UI operation manuals with complete real-screen evidence, traceable capture states, annotated controls, field definitions, task flows, incremental QA, and independent delivery review. python-docx and Pillow run inside a local Python venv; no external document engine is required.",
     "developerName": "Derick",
     "category": "Productivity",
     "capabilities": [
@@ -17,8 +17,8 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Use $ui-guide-lite to create a UI\u64cd\u4f5c\u8aaa\u660e\u66f8 with annotated screenshots and structure QA.",
-      "Use $ui-guide-lite to revise this UI user guide with Python-only DOCX structure QA."
+      "Use $ui-guide-lite to create a UI\u64cd\u4f5c\u8aaa\u660e\u66f8 with complete real screenshots, traceable screenshot evidence, and Python-only QA.",
+      "Use $ui-guide-lite to revise this UI user guide with incremental evidence QA and independent review."
     ],
     "composerIcon": "./skills/ui-guide-lite/assets/ui-ops-manual-lite-small.svg",
     "logo": "./skills/ui-guide-lite/assets/ui-ops-manual-lite-large.svg",
