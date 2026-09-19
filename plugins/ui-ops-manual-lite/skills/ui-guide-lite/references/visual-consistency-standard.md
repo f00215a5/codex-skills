@@ -35,4 +35,4 @@
 
 `verify_docx.py` 用於 DOCX 結構、章節順序、編號、欄位表、圖片封裝與圖說關係；`audit_delivery.py` 另檢查表格對齊／寬度屬性、媒體 hash 與 review evidence 綁定。程式通過不代表開啟後的字型、換行、圖片縮放或跨頁視覺已驗證。
 
-輕量版不要求也不宣稱 DOCX renderer 結果。獨立 reviewer 仍須核對 layout_structure（可用的結構與幾何證據）；`render_visual` 固定記為 `not_performed` 或 `out_of_scope` 並附原因，不能填 `pass`。若使用者需要逐頁渲染，改用完整版 `$ui-guide`。
+輕量版不要求也不宣稱 DOCX renderer 結果。獨立 reviewer 仍須核對 layout_structure（可用的結構與幾何證據）；`render_visual` 固定記為 `not_performed` 或 `out_of_scope` 並附原因，不能填 `pass`。若使用者需要逐頁渲染，需另選具備 renderer 的工作流程；本版不安裝或呼叫 Documents、Word 或 LibreOffice。

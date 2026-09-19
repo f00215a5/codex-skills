@@ -174,8 +174,17 @@ def _table_width(table: ET.Element) -> dict[str, Any]:
     result: dict[str, Any] = {"layout": layout, "type": width_type}
     if width_value is not None:
         result["value"] = width_value
-    if width_type == "pct" or (layout == "fixed" and width_type == "auto"):
-        result.update(status="manual_review", dynamic=True)
+    if width_type == "pct":
+        # Percentage table width and twip grid columns are independent OOXML
+        # units.  Do not compare their numeric values.  Autofit percentage
+        # tables are a valid dynamic layout; fixed percentage geometry needs
+        # an explicit reviewer decision.
+        if width_value is not None and not 0 <= width_value <= 5000:
+            result.update(status="fail", reason_code="percentage_width_out_of_range")
+        elif layout == "autofit":
+            result.update(status="pass", dynamic=True, units_independent=True)
+        else:
+            result.update(status="manual_review", dynamic=True, units_independent=True)
     elif width_type in {"dxa", "auto"}:
         result.update(status="pass", dynamic=width_type == "auto")
     else:
@@ -404,6 +413,293 @@ def _check_entry(raw: Any, name: str, reviewed_paths: set[str]) -> tuple[dict[st
     return result, problems
 
 
+def _normal_path(value: Any) -> str:
+    return value.strip().replace("\\", "/") if isinstance(value, str) else ""
+
+
+def _evidence_ref(value: Any) -> tuple[str, str]:
+    """Return (path, declared role) from a string or role/path object."""
+
+    if isinstance(value, str):
+        return _normal_path(value), ""
+    if isinstance(value, Mapping):
+        return _normal_path(value.get("path")), _normal_path(value.get("role"))
+    return "", ""
+
+
+def _resolved_manifest_reference(value: Any, manifest_path: Path) -> Path | None:
+    """Resolve a path stored inside a screenshot manifest."""
+
+    path_value, _ = _evidence_ref(value)
+    if not path_value:
+        return None
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = manifest_path.parent / candidate
+    try:
+        return candidate.expanduser().resolve()
+    except OSError:
+        return None
+
+
+def _same_resolved_path(left: Path | None, right: Path | None) -> bool:
+    return left is not None and right is not None and left == right
+
+
+def _manifest_declares_image_chain(path: Path | None) -> bool:
+    """Whether the build manifest opts into per-image evidence-chain checks."""
+
+    if path is None or not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, Mapping):
+        return False
+    if isinstance(payload.get("imageEvidence"), list) and payload["imageEvidence"]:
+        return True
+    chapters = payload.get("chapters")
+    if chapters is None:
+        chapter = payload.get("chapter")
+        chapters = [chapter] if isinstance(chapter, Mapping) else []
+    if not isinstance(chapters, list):
+        return False
+    for chapter in chapters:
+        if not isinstance(chapter, Mapping):
+            continue
+        blocks: list[Any] = [chapter.get("entry")]
+        blocks.extend(
+            step
+            for section in chapter.get("sections", [])
+            if isinstance(section, Mapping)
+            for step in section.get("steps", [])
+        )
+        for block in blocks:
+            if not isinstance(block, Mapping):
+                continue
+            evidence = block.get("evidence", block.get("imageEvidence"))
+            if isinstance(evidence, Mapping) and evidence:
+                return True
+    return False
+
+
+def _validate_image_evidence_chain(
+    review: Mapping[str, Any],
+    reviewed_files: Sequence[Any],
+    reviewed_paths: set[str],
+    reviewed_by_path: Mapping[str, Mapping[str, Any]],
+    image_evidence_paths: set[str],
+    media_hashes: set[str],
+    *,
+    required: bool,
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate optional/declared per-image redaction→annotation evidence."""
+
+    raw_chain = review.get("imageEvidence", review.get("image_evidence"))
+    if raw_chain is None:
+        if required:
+            return {"status": "blocked", "images": []}, ["image_evidence_chain_missing"]
+        return {"status": "not_declared", "images": []}, []
+    if not isinstance(raw_chain, list):
+        return {"status": "blocked", "images": []}, ["image_evidence_chain_invalid"]
+
+    chain_results: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    required_roles = {
+        "redaction": ("redaction", "redactionManifest", "redaction_manifest"),
+        "annotation": ("annotation", "annotationManifest", "annotation_manifest"),
+        "provenance": (
+            "provenance",
+            "redactionProvenance",
+            "redaction_provenance",
+        ),
+        "annotation_provenance": (
+            "annotationProvenance",
+            "annotation_provenance",
+            "annotatedProvenance",
+        ),
+    }
+    seen_images: set[str] = set()
+    for index, item in enumerate(raw_chain):
+        if not isinstance(item, Mapping):
+            reasons.append("image_evidence_chain_entry_invalid")
+            continue
+        image_path = _normal_path(item.get("image", item.get("imagePath")))
+        if not image_path or image_path in seen_images:
+            reasons.append("image_evidence_chain_image_invalid")
+            continue
+        seen_images.add(image_path)
+        image_record = reviewed_by_path.get(image_path)
+        image_ok = (
+            image_path in image_evidence_paths
+            and image_record is not None
+            and image_record.get("kind") == "image"
+            and image_record.get("sha256") in media_hashes
+        )
+        if not image_ok:
+            reasons.append("image_evidence_chain_image_unbound")
+        entry_blocked = not image_ok
+        canonical_manifest_value = item.get("manifest", item.get("screenshotManifest"))
+        roles: dict[str, str] = {}
+        for role, aliases in required_roles.items():
+            value = next((item.get(alias) for alias in aliases if alias in item), None)
+            if value is None and role in {"redaction", "annotation"}:
+                value = canonical_manifest_value
+            evidence_path, declared_role = _evidence_ref(value)
+            roles[role] = evidence_path
+            evidence_record = reviewed_by_path.get(evidence_path)
+            if not evidence_path or evidence_path not in reviewed_paths:
+                reasons.append(f"image_evidence_chain_{role}_missing")
+                entry_blocked = True
+            elif evidence_record and evidence_record.get("kind") != "support":
+                reasons.append(f"image_evidence_chain_{role}_not_support")
+                entry_blocked = True
+            elif declared_role and declared_role.casefold() not in {
+                role.casefold(), f"{role}_manifest", f"{role}-manifest", "provenance",
+                "screenshot_manifest", "screenshot-manifest", "manifest",
+            }:
+                reasons.append(f"image_evidence_chain_{role}_role_mismatch")
+                entry_blocked = True
+        manifest_paths = []
+        for role in ("redaction", "annotation"):
+            manifest_record = reviewed_by_path.get(roles[role])
+            resolved_manifest = manifest_record.get("resolvedPath") if manifest_record else None
+            if isinstance(resolved_manifest, Path):
+                manifest_paths.append(resolved_manifest)
+        canonical_manifest_path = manifest_paths[0] if manifest_paths else None
+        if len(manifest_paths) == 2 and not _same_resolved_path(manifest_paths[0], manifest_paths[1]):
+            reasons.append("image_evidence_chain_manifest_mismatch")
+            entry_blocked = True
+        canonical_manifest: Mapping[str, Any] | None = None
+        if canonical_manifest_path is None or not canonical_manifest_path.is_file():
+            reasons.append("image_evidence_chain_manifest_unreadable")
+            entry_blocked = True
+        else:
+            canonical_payload, canonical_error = _read_json(canonical_manifest_path)
+            if canonical_error or not isinstance(canonical_payload, Mapping):
+                reasons.append("image_evidence_chain_manifest_invalid")
+                entry_blocked = True
+            else:
+                canonical_manifest = canonical_payload
+        if canonical_manifest is not None and canonical_manifest_path is not None:
+            manifest_image = _resolved_manifest_reference(
+                canonical_manifest.get("annotatedImage"), canonical_manifest_path
+            )
+            evidence_image = image_record.get("resolvedPath") if image_record else None
+            if not _same_resolved_path(manifest_image, evidence_image if isinstance(evidence_image, Path) else None):
+                reasons.append("image_evidence_chain_image_not_manifest_annotated")
+                entry_blocked = True
+
+            expected_provenance_refs = {
+                "provenance": canonical_manifest.get(
+                    "redactionProvenance",
+                    canonical_manifest.get("redactProvenance", canonical_manifest.get("provenance")),
+                ),
+                "annotation_provenance": canonical_manifest.get(
+                    "annotationProvenance", canonical_manifest.get("annotatedProvenance")
+                ),
+            }
+            for role, manifest_ref in expected_provenance_refs.items():
+                expected_path = _resolved_manifest_reference(manifest_ref, canonical_manifest_path)
+                declared_path = roles.get(role)
+                declared_record = reviewed_by_path.get(declared_path)
+                declared_resolved = declared_record.get("resolvedPath") if declared_record else None
+                if not _same_resolved_path(
+                    expected_path,
+                    declared_resolved if isinstance(declared_resolved, Path) else None,
+                ):
+                    reasons.append(f"image_evidence_chain_{role}_not_manifest_provenance")
+                    entry_blocked = True
+                    continue
+                if declared_record is None or declared_record.get("kind") != "support" or declared_record.get("status") != "pass":
+                    reasons.append(f"image_evidence_chain_{role}_support_unverified")
+                    entry_blocked = True
+                    continue
+                provenance_payload, provenance_error = _read_json(expected_path)
+                if provenance_error or not isinstance(provenance_payload, Mapping):
+                    reasons.append(f"image_evidence_chain_{role}_invalid")
+                    entry_blocked = True
+                    continue
+                if role == "provenance":
+                    expected_parent_hash = canonical_manifest.get("sourceSha256")
+                    expected_output_hash = canonical_manifest.get("redactedSha256")
+                    expected_parent_image = _resolved_manifest_reference(
+                        canonical_manifest.get("sourceImage"), canonical_manifest_path
+                    )
+                    expected_output_image = _resolved_manifest_reference(
+                        canonical_manifest.get("redactedImage"), canonical_manifest_path
+                    )
+                    declared_parent_hash = provenance_payload.get(
+                        "sourceSha256", provenance_payload.get("parentSha256")
+                    )
+                    declared_output_hash = provenance_payload.get(
+                        "redactedSha256", provenance_payload.get("outputSha256")
+                    )
+                    parent_image_key, output_image_key = "parentImage", "outputImage"
+                else:
+                    expected_parent_hash = canonical_manifest.get("redactedSha256")
+                    expected_output_hash = canonical_manifest.get("annotatedSha256")
+                    expected_parent_image = _resolved_manifest_reference(
+                        canonical_manifest.get("redactedImage"), canonical_manifest_path
+                    )
+                    expected_output_image = _resolved_manifest_reference(
+                        canonical_manifest.get("annotatedImage"), canonical_manifest_path
+                    )
+                    declared_parent_hash = provenance_payload.get(
+                        "parentSha256", provenance_payload.get("redactedSha256")
+                    )
+                    declared_output_hash = provenance_payload.get(
+                        "outputSha256", provenance_payload.get("annotatedSha256")
+                    )
+                    parent_image_key, output_image_key = "parentImage", "outputImage"
+                if (
+                    not _hash(expected_parent_hash)
+                    or not _hash(declared_parent_hash)
+                    or str(expected_parent_hash).casefold() != str(declared_parent_hash).casefold()
+                    or not _hash(expected_output_hash)
+                    or not _hash(declared_output_hash)
+                    or str(expected_output_hash).casefold() != str(declared_output_hash).casefold()
+                ):
+                    reasons.append(f"image_evidence_chain_{role}_hash_mismatch")
+                    entry_blocked = True
+                declared_parent_image = _resolved_manifest_reference(
+                    provenance_payload.get(parent_image_key), canonical_manifest_path
+                )
+                declared_output_image = _resolved_manifest_reference(
+                    provenance_payload.get(output_image_key), canonical_manifest_path
+                )
+                if not _same_resolved_path(expected_parent_image, declared_parent_image) or not _same_resolved_path(
+                    expected_output_image, declared_output_image
+                ):
+                    reasons.append(f"image_evidence_chain_{role}_path_mismatch")
+                    entry_blocked = True
+
+            for image_field, image_hash_field in (
+                ("sourceImage", "sourceSha256"),
+                ("redactedImage", "redactedSha256"),
+                ("annotatedImage", "annotatedSha256"),
+            ):
+                image_file = _resolved_manifest_reference(canonical_manifest.get(image_field), canonical_manifest_path)
+                declared_hash = _hash(canonical_manifest.get(image_hash_field))
+                if image_file is None or not image_file.is_file() or declared_hash is None:
+                    reasons.append(f"image_evidence_chain_{image_field}_unreadable")
+                    entry_blocked = True
+                elif _sha256_file(image_file) != declared_hash:
+                    reasons.append(f"image_evidence_chain_{image_field}_hash_mismatch")
+                    entry_blocked = True
+        chain_results.append({"image": image_path, "status": "blocked" if entry_blocked else "pass", "evidence": roles})
+    if required and not seen_images:
+        reasons.append("image_evidence_chain_empty")
+    media_image_paths = {
+        path for path, record in reviewed_by_path.items()
+        if record.get("kind") == "image" and record.get("sha256") in media_hashes
+    }
+    if required and media_image_paths - seen_images:
+        reasons.append("image_evidence_chain_incomplete")
+    return {"status": "pass" if not reasons else "blocked", "images": chain_results}, reasons
+
+
 def _independent_review(
     review: Any,
     review_path: Path | None,
@@ -439,6 +735,7 @@ def _independent_review(
 
     reviewed_files = review.get("reviewed_files") if isinstance(review.get("reviewed_files"), list) else []
     reviewed_paths: set[str] = set()
+    reviewed_by_path: dict[str, dict[str, Any]] = {}
     reviewed_results: list[dict[str, Any]] = []
     file_statuses: list[str] = []
     page_count = image_count = support_count = 0
@@ -456,6 +753,13 @@ def _independent_review(
         if normalized_path in reviewed_paths:
             reasons.append("reviewed_file_duplicate")
         reviewed_paths.add(normalized_path)
+        reviewed_by_path[normalized_path] = {
+            "kind": kind if kind in {"image", "support", "page"} else "unknown",
+            "role": item.get("role"),
+            "sha256": declared_hash,
+            "resolvedPath": path,
+            "status": status,
+        }
         if path and path == review_path:
             reasons.append("review_self_reference")
             status = "blocked"
@@ -551,6 +855,16 @@ def _independent_review(
         if isinstance(item, Mapping) and item.get("kind") == "image"
         for normalized_path in [str(item.get("path", "")).replace("\\", "/")]
     }
+    image_chain, image_chain_reasons = _validate_image_evidence_chain(
+        review,
+        reviewed_files,
+        reviewed_paths,
+        reviewed_by_path,
+        image_evidence_paths,
+        media_hashes,
+        required=build_manifest is not None or _manifest_declares_image_chain(build_manifest),
+    )
+    reasons.extend(image_chain_reasons)
     if media_hashes:
         for name in ("redaction", "operation"):
             raw_check = raw_checks.get(name)
@@ -628,6 +942,7 @@ def _independent_review(
         "reviewed_files": reviewed_results,
         "checks": checks,
         "render_visual": render_visual,
+        "image_evidence_chain": image_chain,
     }
     if reasons:
         result["reason_codes"] = sorted(set(reasons))

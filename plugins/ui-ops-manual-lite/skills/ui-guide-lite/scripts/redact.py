@@ -31,32 +31,37 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
+try:
+    from evidence import bbox as evidence_bbox
+    from evidence import (
+        REDACTION_CATEGORIES,
+        capture_binding_errors,
+        file_alias,
+        overlap,
+        protected_items,
+        redaction_input_payload,
+        redaction_input_sha256,
+    )
+except ImportError:  # pragma: no cover - package import fallback
+    from .evidence import bbox as evidence_bbox  # type: ignore[no-redef]
+    from .evidence import (  # type: ignore[no-redef]
+        REDACTION_CATEGORIES,
+        capture_binding_errors,
+        file_alias,
+        overlap,
+        protected_items,
+        redaction_input_payload,
+        redaction_input_sha256,
+    )
+
 
 DEFAULT_FILL = (31, 31, 31)
 SOURCE_KINDS = {"captured", "provided", "reused", "schematic"}
 REDACTION_METHODS = {"opaque-rectangle", "pixelate"}
 REDACTION_STATUSES = {"pending", "checked", "blocked"}
-SENSITIVE_CATEGORIES = {
-    "name",
-    "identity-id",
-    "customer-id",
-    "member-id",
-    "employee-id",
-    "address",
-    "phone",
-    "email",
-    "policy-number",
-    "bill-number",
-    "contract-number",
-    "transaction-id",
-    "case-id",
-    "password",
-    "token",
-    "api-key",
-    "session-value",
-    "internal-account",
-    "amount",
-}
+# Kept as a descriptive compatibility alias for callers importing the old
+# constant.  The shared helper is the single legal-category source.
+SENSITIVE_CATEGORIES = REDACTION_CATEGORIES
 FORBIDDEN_VALUE_KEYS = {
     "value",
     "rawvalue",
@@ -193,9 +198,9 @@ def validate_manifest(
         category = item.get("category")
         if not isinstance(category, str) or not category.strip():
             errors.append(f"{label}: missing category")
-        elif category.casefold() not in SENSITIVE_CATEGORIES:
+        elif category.strip().casefold() not in SENSITIVE_CATEGORIES:
             errors.append(f"{label}: unknown category")
-        elif category.casefold() == "amount" and manifest.get("amountPolicy") not in {"mask", "masked"}:
+        elif category.strip().casefold() == "amount" and manifest.get("amountPolicy") not in {"mask", "masked"}:
             errors.append(f"{label}: amount redaction requires explicit amountPolicy=mask")
 
         method = item.get("method", "opaque-rectangle")
@@ -222,6 +227,30 @@ def validate_manifest(
                 f"{label}: bbox ({x},{y},{box_width},{box_height}) is outside {width}x{height} raw image"
             )
 
+    protected_boxes = []
+    protected = manifest.get("protectedAreas", manifest.get("protectedControls", []))
+    if protected is not None and not isinstance(protected, list):
+        errors.append("protectedAreas/protectedControls must be a list")
+    elif isinstance(protected, list):
+        for index, item in enumerate(protected):
+            box = evidence_bbox(item.get("bbox") if isinstance(item, dict) else None, (width, height))
+            if box is None:
+                errors.append(f"protectedAreas[{index}]: bbox must be inside raw image")
+            else:
+                protected_boxes.append((index, box))
+
+    for redaction_index, item in enumerate(redactions):
+        if not isinstance(item, dict):
+            continue
+        redaction_box = evidence_bbox(item.get("bbox"), (width, height))
+        if redaction_box is None:
+            continue
+        for protected_index, protected_box in protected_boxes:
+            if overlap(redaction_box, protected_box):
+                errors.append(
+                    f"redactions[{redaction_index}]: bbox overlaps protected control area {protected_index}"
+                )
+
     if redacted_path is not None:
         try:
             redacted_resolved = redacted_path.expanduser().resolve()
@@ -229,7 +258,7 @@ def validate_manifest(
         except OSError:
             redacted_resolved = redacted_path
             image_resolved = image_path
-        if os.path.normcase(str(redacted_resolved)) == os.path.normcase(str(image_resolved)):
+        if file_alias(redacted_path, image_path):
             errors.append("redacted output must not overwrite the raw image")
         if not redacted_path.is_file():
             errors.append(f"redacted image not found: {redacted_path}")
@@ -249,11 +278,17 @@ def validate_manifest(
                 elif sha256(redacted_path).casefold() != declared_redacted_hash.casefold():
                     errors.append("redactedSha256 does not match redacted image")
     if require_checked:
+        # Legacy redaction-only manifests remain usable as adapters.  A
+        # canonical schema/capture state opts into the shared formal binding
+        # gate, which prevents checked status from masking stale coordinates.
+        canonical_manifest = manifest.get("schema_version") is not None or manifest.get("captureState") is not None or manifest.get("captureBinding") is not None
+        if canonical_manifest:
+            errors.extend(capture_binding_errors(manifest, (width, height), require=True))
         if not isinstance(source_hash, str) or not source_hash.strip():
             errors.append("sourceSha256 is required for the checked evidence gate")
         if redacted_path is None:
             errors.append("redacted image is required for the checked evidence gate")
-        if not isinstance(manifest.get("redactedSha256"), str) or not manifest.get("redactedSha256", "").strip():
+        if not canonical_manifest and (not isinstance(manifest.get("redactedSha256"), str) or not manifest.get("redactedSha256", "").strip()):
             errors.append("redactedSha256 is required for the checked evidence gate")
     return errors
 
@@ -286,8 +321,12 @@ def draw_redactions(
     if errors:
         raise ValueError("; ".join(errors))
     try:
-        if output_path.expanduser().resolve() == raw_path.expanduser().resolve():
+        if file_alias(output_path, raw_path):
             raise ValueError("redacted output must not overwrite the raw image")
+        if file_alias(output_path, manifest_path):
+            raise ValueError("redacted output must not overwrite the manifest")
+        if output_path.exists():
+            raise ValueError("redacted output already exists; choose a new immutable output path")
     except OSError:
         pass
     with Image.open(raw_path) as source:
@@ -306,6 +345,8 @@ def draw_redactions(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path, format="PNG")
     provenance = {
+        "schema_version": 1,
+        "tool": "redact.py",
         "sourceImage": str(manifest.get("sourceImage", raw_path.name)),
         # validate_manifest requires this field; normalize it so provenance
         # cannot silently claim a default kind when the manifest omitted or
@@ -314,6 +355,12 @@ def draw_redactions(
         "sourceSha256": sha256(raw_path),
         "redactedImage": str(manifest.get("redactedImage", output_path.name)),
         "redactedSha256": sha256(output_path),
+        "parentImage": str(manifest.get("sourceImage", raw_path.name)),
+        "parentSha256": sha256(raw_path),
+        "outputImage": str(manifest.get("redactedImage", output_path.name)),
+        "outputSha256": sha256(output_path),
+        "redactionInputSha256": redaction_input_sha256(manifest),
+        "redactionInputs": redaction_input_payload(manifest),
         "redactions": [
             {
                 "category": item.get("category"),
@@ -324,7 +371,51 @@ def draw_redactions(
             for item in manifest["redactions"]
         ],
     }
+    state = manifest.get("captureState")
+    if isinstance(state, dict):
+        # Keep the binding evidence safe and compact; do not copy arbitrary
+        # capture payloads or page text into provenance.
+        provenance["captureState"] = {
+            key: state[key]
+            for key in ("id", "rawSha256", "viewportCssSize", "scroll", "calibration")
+            if key in state
+        }
+    binding = manifest.get("captureBinding")
+    if isinstance(binding, dict):
+        provenance["captureBinding"] = {
+            key: binding[key]
+            for key in ("id", "captureStateId", "captureId", "rawSha256", "sourceSha256", "calibration")
+            if key in binding
+        }
     return provenance
+
+
+def validate_redaction_provenance(
+    provenance: dict[str, Any],
+    manifest: dict[str, Any],
+    raw_path: Path,
+    redacted_path: Path,
+) -> list[str]:
+    """Check provenance emitted by ``draw`` against the current manifest.
+
+    This is deliberately separate from visual review.  It proves that the
+    checked files and the listed pixel-affecting redaction inputs are the ones
+    used by the tool; it cannot prove a human found every sensitive value.
+    """
+
+    errors: list[str] = []
+    source_hash = sha256(raw_path)
+    redacted_hash = sha256(redacted_path)
+    if provenance.get("sourceSha256", provenance.get("parentSha256")) != source_hash:
+        errors.append("redaction provenance parent hash does not match raw image")
+    if provenance.get("redactedSha256", provenance.get("outputSha256")) != redacted_hash:
+        errors.append("redaction provenance output hash does not match redacted image")
+    if provenance.get("redactionInputSha256") != redaction_input_sha256(manifest):
+        errors.append("redaction provenance inputs do not match manifest redactions")
+    expected_inputs = redaction_input_payload(manifest)
+    if provenance.get("redactionInputs") != expected_inputs:
+        errors.append("redaction provenance redaction inputs do not match manifest")
+    return errors
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -356,10 +447,16 @@ def main(argv: list[str] | None = None) -> int:
             output_path = args.output.expanduser().resolve()
             provenance_path = args.provenance_output.expanduser().resolve() if args.provenance_output else None
             forbidden = {raw_path, manifest_path}
-            if output_path in forbidden or (provenance_path is not None and provenance_path in forbidden):
+            if any(file_alias(output_path, path) for path in forbidden) or (
+                provenance_path is not None and any(file_alias(provenance_path, path) for path in forbidden)
+            ):
                 raise ValueError("output and provenance paths must not overwrite raw image or manifest")
-            if provenance_path is not None and provenance_path == output_path:
+            if provenance_path is not None and file_alias(provenance_path, output_path):
                 raise ValueError("provenance output must be different from redacted image output")
+            if output_path.exists():
+                raise ValueError("redacted output already exists; choose a new immutable output path")
+            if provenance_path is not None and provenance_path.exists():
+                raise ValueError("provenance output already exists; choose a new immutable output path")
             provenance = draw_redactions(
                 manifest,
                 raw_path,
@@ -392,6 +489,24 @@ def main(argv: list[str] | None = None) -> int:
                     manifest["sourceSha256"] = provenance.get("sourceSha256")
                 if manifest.get("redactedSha256") is None:
                     manifest["redactedSha256"] = provenance.get("redactedSha256")
+                if redacted is None or not redacted.is_file():
+                    raise ValueError("redacted image is required when checking provenance")
+                provenance_errors = validate_redaction_provenance(
+                    provenance, manifest, raw, redacted.expanduser().resolve()
+                )
+                if provenance_errors:
+                    raise ValueError("; ".join(provenance_errors))
+                if args.require_checked:
+                    for field in ("sourceSha256", "redactedSha256"):
+                        declared = manifest.get(field)
+                        observed = provenance.get(field)
+                        if isinstance(declared, str) and isinstance(observed, str) and declared.casefold() != observed.casefold():
+                            raise ValueError(f"provenance {field} does not match manifest")
+                    state = manifest.get("captureState")
+                    provenance_state = provenance.get("captureState")
+                    if isinstance(state, dict) and isinstance(provenance_state, dict):
+                        if state.get("id") != provenance_state.get("id") or str(state.get("rawSha256", "")).casefold() != str(provenance_state.get("rawSha256", "")).casefold():
+                            raise ValueError("provenance captureState does not match manifest")
             errors = validate_manifest(
                 manifest,
                 raw,

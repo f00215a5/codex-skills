@@ -15,6 +15,7 @@ the conversation, not added to the generated manual.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import zipfile
@@ -75,6 +76,87 @@ def numbered_paragraphs(document: Document) -> list[tuple[int, int]]:
     return numbered
 
 
+def numbering_ids(document: Document) -> tuple[list[int], list[int], list[int], list[int]]:
+    """Return abstract IDs, concrete IDs, nsids and startOverride values."""
+
+    root = document.part.numbering_part.element
+    abstract_ids: list[int] = []
+    concrete_ids: list[int] = []
+    nsids: list[int] = []
+    overrides: list[int] = []
+    for node in root.findall(qn("w:abstractNum")):
+        raw_id = node.get(qn("w:abstractNumId"))
+        if raw_id is not None:
+            abstract_ids.append(int(raw_id))
+        nsid = node.find(qn("w:nsid"))
+        if nsid is not None and nsid.get(qn("w:val")) is not None:
+            try:
+                nsids.append(int(nsid.get(qn("w:val")), 16))
+            except ValueError:
+                pass
+    for node in root.findall(qn("w:num")):
+        raw_id = node.get(qn("w:numId"))
+        if raw_id is not None:
+            concrete_ids.append(int(raw_id))
+        for override in node.findall(qn("w:lvlOverride")):
+            start = override.find(qn("w:startOverride"))
+            if start is not None and start.get(qn("w:val")) is not None:
+                try:
+                    overrides.append(int(start.get(qn("w:val"))))
+                except ValueError:
+                    pass
+    return abstract_ids, concrete_ids, nsids, overrides
+
+
+def operation_numbering_definitions(document: Document, num_ids: set[int]) -> list[str]:
+    """Validate the concrete definitions actually used by operation steps."""
+
+    root = document.part.numbering_part.element
+    abstracts = {
+        int(node.get(qn("w:abstractNumId"))): node
+        for node in root.findall(qn("w:abstractNum"))
+        if node.get(qn("w:abstractNumId")) is not None
+    }
+    concretes = {
+        int(node.get(qn("w:numId"))): node
+        for node in root.findall(qn("w:num"))
+        if node.get(qn("w:numId")) is not None
+    }
+    failures: list[str] = []
+    referenced_abstracts: set[int] = set()
+    for num_id in sorted(num_ids):
+        concrete = concretes.get(num_id)
+        if concrete is None:
+            failures.append(f"numId {num_id} has no concrete definition")
+            continue
+        abstract_ref = concrete.find(qn("w:abstractNumId"))
+        raw_abstract_id = abstract_ref.get(qn("w:val")) if abstract_ref is not None else None
+        try:
+            abstract_id = int(raw_abstract_id) if raw_abstract_id is not None else -1
+        except ValueError:
+            abstract_id = -1
+        if abstract_id not in abstracts:
+            failures.append(f"numId {num_id} references missing abstractNumId {abstract_id}")
+        else:
+            referenced_abstracts.add(abstract_id)
+            nsid = abstracts[abstract_id].find(qn("w:nsid"))
+            if nsid is None or not nsid.get(qn("w:val")):
+                failures.append(f"abstractNumId {abstract_id} is missing nsid")
+        override_ok = False
+        for override in concrete.findall(qn("w:lvlOverride")):
+            if override.get(qn("w:ilvl")) != "0":
+                continue
+            start = override.find(qn("w:startOverride"))
+            if start is not None and start.get(qn("w:val")) == "1":
+                override_ok = True
+                break
+        if not override_ok:
+            failures.append(f"numId {num_id} is missing level-0 startOverride=1")
+    if len(referenced_abstracts) != len(num_ids):
+        failures.append("operation sections do not have one distinct abstract numbering definition each")
+    return failures
+
+
 def drawing_targets(document: Document) -> list[tuple[int, str]]:
     """Return (paragraph_index, media target) for every embedded drawing."""
     items: list[tuple[int, str]] = []
@@ -84,6 +166,45 @@ def drawing_targets(document: Document) -> list[tuple[int, str]]:
             if r_id and r_id in document.part.related_parts:
                 items.append((index, str(document.part.related_parts[r_id].partname)))
     return items
+
+
+def inline_extent_failures(document: Document) -> list[str]:
+    """Return final-package inline image extents outside the section container."""
+
+    section = document.sections[0]
+    content_width = int(section.page_width) - int(section.left_margin) - int(section.right_margin)
+    content_height = int(section.page_height) - int(section.top_margin) - int(section.bottom_margin)
+    failures: list[str] = []
+    for index, extent in enumerate(document.element.body.iter(qn("wp:extent")), start=1):
+        parent = extent.getparent()
+        if parent is None or parent.tag != qn("wp:inline"):
+            continue
+        try:
+            width = int(extent.get("cx"))
+            height = int(extent.get("cy"))
+        except (TypeError, ValueError):
+            failures.append(f"inline image {index} has invalid extent")
+            continue
+        if width <= 0 or height <= 0:
+            failures.append(f"inline image {index} has non-positive extent {width}x{height}")
+            continue
+        if width > content_width:
+            failures.append(f"inline image {index} width {width} exceeds content width {content_width}")
+        if height > content_height:
+            failures.append(f"inline image {index} height {height} exceeds content height {content_height}")
+    return failures
+
+
+def exact_height_rows(document: Document) -> list[int]:
+    """Return table-row indexes carrying an exact fixed height."""
+
+    rows: list[int] = []
+    for index, row in enumerate(document.element.body.iter(qn("w:tr")), start=1):
+        tr_pr = row.find(qn("w:trPr"))
+        height = tr_pr.find(qn("w:trHeight")) if tr_pr is not None else None
+        if height is not None and height.get(qn("w:hRule")) == "exact":
+            rows.append(index)
+    return rows
 
 
 def table_headers(table) -> list[str]:
@@ -152,6 +273,18 @@ def main() -> int:
                    and abs(section.bottom_margin.inches - 0.59) < 0.01
                    and abs(section.left_margin.inches - 0.65) < 0.01
                    and abs(section.right_margin.inches - 0.65) < 0.01)
+    extent_failures = inline_extent_failures(document)
+    reporter.check(
+        "inline image extents fit section content container",
+        not extent_failures,
+        detail="; ".join(extent_failures),
+    )
+    exact_rows = exact_height_rows(document)
+    if exact_rows:
+        print(
+            "[RISK] table rows use exact fixed heights; content clipping is not inferred — "
+            f"rows={exact_rows}"
+        )
 
     # -- heading order ------------------------------------------------------ #
     headings = headings_of(document)
@@ -167,7 +300,18 @@ def main() -> int:
     reporter.check("heading order 更新紀錄→修訂狀態→使用提醒→共通操作規則",
                    order == ["更新紀錄", "修訂狀態", "使用提醒", "共通操作規則"])
 
-    # -- independent step numbering per section ----------------------------- #
+    # -- numbering definitions and independent step numbering ---------------- #
+    abstract_ids, concrete_ids, nsids, overrides = numbering_ids(document)
+    reporter.check("numbering abstract IDs are unique", len(abstract_ids) == len(set(abstract_ids)))
+    reporter.check("numbering concrete IDs are unique", len(concrete_ids) == len(set(concrete_ids)))
+    reporter.check("numbering concrete IDs are not the remove-numbering sentinel",
+                   all(value >= 1 for value in concrete_ids))
+    reporter.check("numbering custom abstract definitions have unique nsid",
+                   len(nsids) == len(set(nsids)))
+    # Built-in template lists may not have overrides.  The concrete lists used
+    # by operation steps are checked against their own abstract definitions
+    # below, so an unused template definition cannot create a false pass.
+
     numbered = numbered_paragraphs(document)
     reporter.check("operation steps carry numbering", len(numbered) >= 1, f"numbered paragraphs={len(numbered)}")
     # Every Heading-2 operation section must own exactly one numId so its step
@@ -188,14 +332,34 @@ def main() -> int:
             current.append(int(num_id.get(qn("w:val"))))
     if current:
         blocks.append(current)
+    nonempty_blocks = [block for block in blocks if block]
+    distinct_section_ids = [block[0] for block in nonempty_blocks if len(set(block)) == 1]
     reporter.check("every step list restarts within its section",
-                   any(blocks) and all(len(set(block)) <= 1 for block in blocks),
+                   any(nonempty_blocks) and all(len(set(block)) == 1 for block in nonempty_blocks),
                    detail=f"step blocks={[len(b) for b in blocks]}")
+    reporter.check("each operation section owns a distinct numbering definition",
+                   len(distinct_section_ids) == len(set(distinct_section_ids)),
+                   detail=f"numIds={distinct_section_ids}")
+    numbering_definition_failures = operation_numbering_definitions(document, set(distinct_section_ids))
+    reporter.check(
+        "operation numbering definitions reference unique resettable abstract lists",
+        not numbering_definition_failures,
+        detail="; ".join(numbering_definition_failures),
+    )
 
     # -- field tables ------------------------------------------------------- #
     tables = document.tables
     for index, table in enumerate(tables, start=1):
         alignment, width_type, layout, width_value, grid_width = table_layout_properties(table)
+        width_units_valid = (
+            (width_type == "pct" and (width_value is None or 0 <= width_value <= 5000))
+            or (width_type == "dxa" and (width_value is None or 0 <= width_value <= 10368 + 20))
+            or width_type == "auto"
+            or width_type is None
+        )
+        # ``tblW`` percentage units and column-grid twips are independent;
+        # never compare their numeric values as if they shared a unit.
+        grid_units_valid = grid_width is None or 0 < grid_width <= 10368 + 20
         reporter.check(
             f"table {index} has explicit center alignment",
             alignment == "center",
@@ -205,8 +369,8 @@ def main() -> int:
             f"table {index} uses flexible layout",
             layout in {"autofit", "fixed", None}
             and width_type in {"auto", "pct", "dxa", None}
-            and (width_value is None or width_value <= 10368 + 20)
-            and (grid_width is None or grid_width <= 10368 + 20),
+            and width_units_valid
+            and grid_units_valid,
             detail=f"width_type={width_type!r} layout={layout!r} width_twips={width_value!r} grid_twips={grid_width!r}",
         )
     field_tables = [
@@ -254,15 +418,19 @@ def main() -> int:
     if args.manifest:
         manifest = json_load(args.manifest.expanduser().resolve())
         expected: list[str] = []
-        entry = (manifest.get("chapter") or {}).get("entry") or {}
-        if entry.get("image"):
-            if match := CAPTION_PATTERN.match(str(entry.get("caption", ""))):
-                expected.append(match.group(1))
-        for section in (manifest.get("chapter") or {}).get("sections", []):
-            for step in section.get("steps", []):
-                if step.get("image"):
-                    if match := CAPTION_PATTERN.match(str(step.get("caption", ""))):
-                        expected.append(match.group(1))
+        chapters = manifest.get("chapters")
+        if chapters is None:
+            chapters = [manifest.get("chapter") or {}]
+        for chapter in chapters:
+            entry = chapter.get("entry") or {}
+            if entry.get("image"):
+                if match := CAPTION_PATTERN.match(str(entry.get("caption", ""))):
+                    expected.append(match.group(1))
+            for section in chapter.get("sections", []):
+                for step in section.get("steps", []):
+                    if step.get("image"):
+                        if match := CAPTION_PATTERN.match(str(step.get("caption", ""))):
+                            expected.append(match.group(1))
         reporter.check("caption sequence matches build manifest order",
                        list(captions) == expected, detail=f"docx={captions} manifest={expected}")
 

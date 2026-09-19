@@ -22,7 +22,7 @@ or against "baseDir" when present):
   "usageReminders": ["...", "..."],
   "commonRules": ["...", "..."],
   "fontName": "PingFang TC",
-  "chapter": {
+  "chapters": [{
     "title": "訂單管理功能",
     "entry": {"caption": "功能入口：...", "image": "annotated/entry.png",
               "detail": "..."},                       # detail optional
@@ -44,17 +44,20 @@ or against "baseDir" when present):
         "verification": "..."     # 操作後檢核
       }
     ]
-  },
+  }],
   "updateLog": [{"version": "1.0", "date": "2026-01-15", "changes": "初版"}]
 }
 
-Rule: the 更新紀錄 table lists entries from oldest to newest, in manifest order.
+`chapters[]` is the preferred form; the legacy single `chapter` object remains
+accepted for compatibility.  The 更新紀錄 table lists entries from oldest to
+newest, in manifest order.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -68,6 +71,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 from docx.text.paragraph import Paragraph
+from PIL import Image
 
 TEAL = RGBColor(0x0F, 0x5B, 0x5B)
 BODY_FONT_SIZE = Pt(11)
@@ -91,20 +95,27 @@ RUNTIME_AVAILABILITY_MARKERS = (
 SENSITIVE_IMAGE_DIRS = {"raw", "original", "unredacted", "source"}
 
 BULLET_ABSNUM = """<w:abstractNum xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:abstractNumId="{abs_id}">
+  <w:nsid w:val="{nsid}"/>
   <w:multiLevelType w:val="hybridMultilevel"/>
   <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/>
     <w:lvlText w:val="•"/><w:lvlJc w:val="left"/></w:lvl>
 </w:abstractNum>"""
 
 STEP_ABSNUM = """<w:abstractNum xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:abstractNumId="{abs_id}">
+  <w:nsid w:val="{nsid}"/>
   <w:multiLevelType w:val="hybridMultilevel"/>
-  <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/>
-    <w:lvlJc w:val="left"/><w:suff w:val="space"/></w:lvl>
+  <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:suff w:val="space"/>
+    <w:lvlText w:val="%1."/><w:lvlJc w:val="left"/></w:lvl>
 </w:abstractNum>"""
 
 NUM_XML = """<w:num xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:numId="{num_id}">
   <w:abstractNumId w:val="{abs_id}"/>
+  <w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>
 </w:num>"""
+
+MAX_IMAGE_WIDTH = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT
+MAX_IMAGE_HEIGHT = 7.5
+MIN_IMAGE_WIDTH = 1.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -118,9 +129,22 @@ def load_manifest(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"{path}: manifest must be a JSON object")
-    for key in ("title", "revision", "chapter", "updateLog"):
+    for key in ("title", "revision", "updateLog"):
         if key not in payload:
             raise ValueError(f"{path}: missing required key {key!r}")
+    chapters = payload.get("chapters")
+    chapter = payload.get("chapter")
+    if chapters is None and not isinstance(chapter, dict):
+        raise ValueError(f"{path}: missing required key 'chapter' or 'chapters'")
+    if chapters is not None and (
+        not isinstance(chapters, list) or not chapters or not all(isinstance(item, dict) for item in chapters)
+    ):
+        raise ValueError(f"{path}: 'chapters' must be a non-empty list of objects")
+    if isinstance(chapter, dict) and not chapter.get("title"):
+        raise ValueError(f"{path}: chapter title is required")
+    for index, item in enumerate(iter_chapters(payload)):
+        if not item.get("title"):
+            raise ValueError(f"{path}: chapter {index} title is required")
     reject_runtime_availability_warnings(payload)
     reject_unapproved_schematic(payload)
     reject_unredacted_image_refs(payload)
@@ -153,6 +177,16 @@ def base_dir(manifest: dict[str, Any], manifest_path: Path) -> Path:
     return Path(manifest.get("baseDir", manifest_path.parent)).expanduser().resolve()
 
 
+def iter_chapters(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return chapters from the current list form or legacy single-chapter form."""
+
+    chapters = manifest.get("chapters")
+    if chapters is not None:
+        return list(chapters)
+    chapter = manifest.get("chapter")
+    return [chapter] if isinstance(chapter, dict) else []
+
+
 def resolve_image(manifest_ref: str, base: Path) -> Path:
     path = base / manifest_ref
     if not path.is_file():
@@ -161,14 +195,17 @@ def resolve_image(manifest_ref: str, base: Path) -> Path:
 
 
 def _iter_image_refs(manifest: dict[str, Any]) -> Iterable[tuple[str, str]]:
-    chapter = manifest.get("chapter") or {}
-    entry = chapter.get("entry") or {}
-    if entry.get("image"):
-        yield "chapter.entry.image", str(entry["image"])
-    for section_index, section in enumerate(chapter.get("sections", [])):
-        for step_index, step in enumerate(section.get("steps", [])):
-            if step.get("image"):
-                yield f"chapter.sections[{section_index}].steps[{step_index}].image", str(step["image"])
+    for chapter_index, chapter in enumerate(iter_chapters(manifest)):
+        entry = chapter.get("entry") or {}
+        if entry.get("image"):
+            yield f"chapters[{chapter_index}].entry.image", str(entry["image"])
+        for section_index, section in enumerate(chapter.get("sections", [])):
+            for step_index, step in enumerate(section.get("steps", [])):
+                if step.get("image"):
+                    yield (
+                        f"chapters[{chapter_index}].sections[{section_index}].steps[{step_index}].image",
+                        str(step["image"]),
+                    )
 
 
 def _source_kind(value: Any) -> str | None:
@@ -189,13 +226,14 @@ def reject_unapproved_schematic(manifest: dict[str, Any]) -> None:
         or (isinstance(source, dict) and source.get("approved") is True)
     ):
         raise ValueError("schematic screenshot source requires explicit user approval")
-    chapter = manifest.get("chapter") or {}
-    blocks = [chapter.get("entry") or {}]
-    blocks.extend(
-        step
-        for section in chapter.get("sections", [])
-        for step in section.get("steps", [])
-    )
+    blocks: list[dict[str, Any]] = []
+    for chapter in iter_chapters(manifest):
+        blocks.append(chapter.get("entry") or {})
+        blocks.extend(
+            step
+            for section in chapter.get("sections", [])
+            for step in section.get("steps", [])
+        )
     for index, block in enumerate(blocks):
         block_source = block.get("screenshotSource", block.get("sourceKind"))
         if _source_kind(block_source) == "schematic" and not (
@@ -226,8 +264,46 @@ def reject_unredacted_image_refs(manifest: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 
 def _next_element_id(root, tag: str) -> int:
-    ids = [int(node.get(qn("w:" + tag))) for node in root.findall(qn("w:" + tag))]
-    return (max(ids) + 1) if ids else 0
+    """Return the next ID stored as an attribute on numbering definitions.
+
+    ``abstractNumId`` and ``numId`` are attributes of ``w:abstractNum`` and
+    ``w:num`` respectively; looking for elements named after the attributes
+    always returned zero and silently reused IDs.
+    """
+
+    element_tag = {"abstractNumId": "abstractNum", "numId": "num"}.get(tag)
+    if element_tag is None:
+        raise ValueError(f"unsupported numbering id attribute: {tag}")
+    ids: list[int] = []
+    for node in root.findall(qn("w:" + element_tag)):
+        value = node.get(qn("w:" + tag))
+        if value is None:
+            continue
+        try:
+            ids.append(int(value))
+        except ValueError:
+            continue
+    next_id = max(ids, default=-1) + 1
+    # numId=0 is the Word sentinel for removing numbering from a paragraph;
+    # never allocate it for a concrete list definition.
+    return max(1, next_id) if tag == "numId" else next_id
+
+
+def _next_nsid(root) -> str:
+    """Return a unique eight-hex-digit namespace ID for an abstract list."""
+
+    values: list[int] = []
+    for node in root.findall(qn("w:abstractNum")):
+        nsid = node.find(qn("w:nsid"))
+        if nsid is None:
+            continue
+        raw = nsid.get(qn("w:val"))
+        try:
+            if raw is not None:
+                values.append(int(raw, 16))
+        except ValueError:
+            continue
+    return f"{max(values, default=0) + 1:08X}"
 
 
 def _numbering_root(document: DocumentType):
@@ -246,8 +322,18 @@ def fresh_num_id(document: DocumentType, abstract_xml: str) -> int:
     root = _numbering_root(document)
     abs_id = _next_element_id(root, "abstractNumId")
     num_id = _next_element_id(root, "numId")
-    root.append(parse_xml(abstract_xml.format(abs_id=abs_id)))
-    root.append(parse_xml(NUM_XML.format(num_id=num_id, abs_id=abs_id)))
+    nsid = _next_nsid(root)
+    abstract = parse_xml(abstract_xml.format(abs_id=abs_id, nsid=nsid))
+    numbering = parse_xml(NUM_XML.format(num_id=num_id, abs_id=abs_id))
+    # OOXML groups all abstract definitions before concrete ``w:num``
+    # definitions.  Inserting before the first num avoids interleaving them
+    # on repeated calls while retaining existing template definitions.
+    first_num = root.find(qn("w:num"))
+    if first_num is None:
+        root.append(abstract)
+    else:
+        root.insert(root.index(first_num), abstract)
+    root.append(numbering)
     return num_id
 
 
@@ -382,9 +468,98 @@ def add_bullet(document: DocumentType, text: str, num_id: int) -> Paragraph:
     return paragraph
 
 
-def add_image_with_caption(document: DocumentType, image_path: Path, caption: str, *, width: float = 6.0) -> None:
+def image_display_size(
+    image_path: Path,
+    *,
+    width: float | None = None,
+    height: float | None = None,
+) -> tuple[float, float]:
+    """Resolve an aspect-preserving inline size in inches.
+
+    Width and height are optional manifest display hints.  A missing dimension
+    is derived from the source pixel aspect ratio.  Images that would be too
+    tall for a normal page flow are rejected so callers provide a continuation
+    or a main-plus-detail image instead of silently shrinking UI text.
+    """
+
+    try:
+        with Image.open(image_path) as image:
+            pixel_width, pixel_height = image.size
+    except (OSError, ValueError) as error:
+        raise ValueError(f"cannot inspect image dimensions: {image_path}: {error}") from error
+    if pixel_width <= 0 or pixel_height <= 0:
+        raise ValueError(f"image dimensions must be positive: {image_path}")
+    aspect = pixel_width / pixel_height
+    if width is None and height is None:
+        width = 6.0
+    if width is not None:
+        if isinstance(width, bool) or not isinstance(width, (int, float)) or not math.isfinite(width):
+            raise ValueError("image display width must be a finite number in inches")
+        if width <= 0:
+            raise ValueError("image display width must be positive")
+    if height is not None:
+        if isinstance(height, bool) or not isinstance(height, (int, float)) or not math.isfinite(height):
+            raise ValueError("image display height must be a finite number in inches")
+        if height <= 0:
+            raise ValueError("image display height must be positive")
+    if width is None:
+        width = float(height) * aspect
+    if height is None:
+        height = float(width) / aspect
+    if abs(float(height) - float(width) / aspect) > 0.02:
+        raise ValueError(
+            f"image display width/height must preserve source aspect ratio ({pixel_width}x{pixel_height})"
+        )
+    width = float(width)
+    height = float(height)
+    if width < MIN_IMAGE_WIDTH:
+        raise ValueError(
+            f"image display width {width:.2f}in is too small for readable UI evidence; "
+            "provide a readable full viewport capture with a continuation/detail image"
+        )
+    if width > MAX_IMAGE_WIDTH + 0.01:
+        raise ValueError(
+            f"image display width {width:.2f}in exceeds the available content width "
+            f"({MAX_IMAGE_WIDTH:.2f}in)"
+        )
+    if height > MAX_IMAGE_HEIGHT:
+        raise ValueError(
+            f"image display height {height:.2f}in is too tall for a readable page flow; "
+            "provide a readable full viewport capture with a continuation/main-plus-detail image"
+        )
+    return width, height
+
+
+def block_display_size(block: dict[str, Any]) -> tuple[float | None, float | None]:
+    """Read one compatible display-size shape from an image-bearing block."""
+
+    display = block.get("display")
+    if display is not None and not isinstance(display, dict):
+        raise ValueError("image display must be an object with optional width/height")
+    display = display or {}
+    width = display.get("width", block.get("width"))
+    height = display.get("height", block.get("height"))
+    return width, height
+
+
+def add_image_with_caption(
+    document: DocumentType,
+    image_path: Path,
+    caption: str,
+    *,
+    width: float | None = None,
+    height: float | None = None,
+) -> None:
+    width, height = image_display_size(image_path, width=width, height=height)
+    # Passing only the derived width preserves the image's native aspect ratio
+    # in python-docx; height is validated above for explicit, reviewable sizing.
     document.add_picture(str(image_path), width=Inches(width))
-    document.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    image_paragraph = document.paragraphs[-1]
+    image_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    # Keep the image with its caption when Word repaginates the document.  This
+    # is only a paragraph-flow hint; final page breaks remain outside lite's
+    # renderer-free verification scope.
+    image_paragraph.paragraph_format.keep_with_next = True
     caption_paragraph = document.add_paragraph()
     caption_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = caption_paragraph.add_run(caption)
@@ -401,6 +576,16 @@ def heading_cell(cell, text: str, font_name: str) -> None:
     shade_cell(cell, "CDEBE5")
 
 
+def set_row_flow_properties(row, *, repeat_header: bool = False) -> None:
+    """Keep table rows intact and optionally repeat the header on new pages."""
+
+    tr_pr = row._tr.get_or_add_trPr()
+    if tr_pr.find(qn("w:cantSplit")) is None:
+        tr_pr.append(OxmlElement("w:cantSplit"))
+    if repeat_header and tr_pr.find(qn("w:tblHeader")) is None:
+        tr_pr.append(OxmlElement("w:tblHeader"))
+
+
 def build_tables(document: DocumentType, rows: Iterable[list[str]], header: list[str],
                  font_name: str = DEFAULT_FONT) -> None:
     table = document.add_table(rows=1, cols=len(header))
@@ -408,8 +593,11 @@ def build_tables(document: DocumentType, rows: Iterable[list[str]], header: list
     set_table_layout(table)
     for index, title in enumerate(header):
         heading_cell(table.rows[0].cells[index], title, font_name)
+    set_row_flow_properties(table.rows[0], repeat_header=True)
     for row in rows:
-        cells = table.add_row().cells
+        table_row = table.add_row()
+        set_row_flow_properties(table_row)
+        cells = table_row.cells
         for index, value in enumerate(row):
             text = cells[index].paragraphs[0].add_run(str(value))
             set_run_fonts(text, font_name)
@@ -467,14 +655,20 @@ def add_common_rules(document: DocumentType, rules: list[str]) -> None:
         add_bullet(document, rule, bullet_num)
 
 
-def add_chapter(document: DocumentType, manifest: dict[str, Any], base: Path, font_name: str) -> None:
-    chapter = manifest["chapter"]
+def add_chapter(document: DocumentType, chapter: dict[str, Any], base: Path, font_name: str) -> None:
     add_heading(document, chapter["title"], 1)
 
     entry = chapter.get("entry") or {}
     image_ref = entry.get("image")
     if image_ref:
-        add_image_with_caption(document, resolve_image(image_ref, base), entry.get("caption", ""))
+        entry_width, entry_height = block_display_size(entry)
+        add_image_with_caption(
+            document,
+            resolve_image(image_ref, base),
+            entry.get("caption", ""),
+            width=entry_width,
+            height=entry_height,
+        )
     if entry.get("detail"):
         add_body_paragraph(document, entry["detail"])
 
@@ -494,8 +688,13 @@ def add_chapter(document: DocumentType, manifest: dict[str, Any], base: Path, fo
                 add_body_paragraph(document, step["detail"])
             image_ref = step.get("image")
             if image_ref:
+                step_width, step_height = block_display_size(step)
                 add_image_with_caption(
-                    document, resolve_image(image_ref, base), step.get("caption", "")
+                    document,
+                    resolve_image(image_ref, base),
+                    step.get("caption", ""),
+                    width=step_width,
+                    height=step_height,
                 )
 
         fields = section.get("fields") or []
@@ -538,7 +737,8 @@ def build(document: DocumentType, manifest: dict[str, Any], base: Path) -> None:
     add_version_basis(document, manifest.get("versionBasis"))
     add_usage_reminders(document, manifest.get("usageReminders") or [])
     add_common_rules(document, manifest.get("commonRules") or [])
-    add_chapter(document, manifest, base, font_name)
+    for chapter in iter_chapters(manifest):
+        add_chapter(document, chapter, base, font_name)
 
 
 def main() -> int:

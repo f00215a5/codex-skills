@@ -43,6 +43,27 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
+try:
+    from evidence import (
+        annotation_input_payload,
+        annotation_input_sha256,
+        capture_binding_errors,
+        file_alias,
+        image_size,
+        is_sha256,
+        is_text,
+    )
+except ImportError:  # pragma: no cover - package import fallback
+    from .evidence import (  # type: ignore[no-redef]
+        annotation_input_payload,
+        annotation_input_sha256,
+        capture_binding_errors,
+        file_alias,
+        image_size,
+        is_sha256,
+        is_text,
+    )
+
 RED = (214, 69, 69)  # kept distinct from the teal brand so it reads as an alert
 PREVIEW_STATUSES = {"proposed", "pending", "manual-adjusted"}
 APPROVED_STATUSES = {"approved", "verified", "checked"}
@@ -67,7 +88,13 @@ def file_sha256(path: Path) -> str:
 
 
 def hard_errors(
-    manifest: dict[str, Any], image_path: Path, *, require_approved: bool = False
+    manifest: dict[str, Any],
+    image_path: Path,
+    *,
+    manifest_path: Path | None = None,
+    stroke: int = 3,
+    font_size: int = 26,
+    require_approved: bool = False,
 ) -> list[str]:
     """Return hard errors before drawing or passing a build gate.
 
@@ -80,9 +107,8 @@ def hard_errors(
 
     errors: list[str] = []
     try:
-        with Image.open(image_path) as probe:
-            width, height = probe.size
-    except OSError as error:
+        width, height = image_size(image_path)
+    except (OSError, ValueError) as error:
         return [f"cannot open image {image_path}: {error}"]
 
     declared_hash = manifest.get("sourceSha256")
@@ -90,13 +116,40 @@ def hard_errors(
         if not isinstance(declared_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", declared_hash):
             errors.append("sourceSha256 must be a SHA-256 hex digest")
         else:
+            # A canonical per-image manifest hashes the raw source.  The
+            # annotation command intentionally receives the redacted image;
+            # do not compare a raw hash to redacted bytes.  Legacy annotation
+            # manifests without redactedImage retain the old direct binding.
+            redacted_ref = manifest.get("redactedImage")
+            redacted_path = None
+            if isinstance(redacted_ref, str) and manifest_path is not None:
+                redacted_path = (manifest_path.parent / redacted_ref).expanduser().resolve()
+            image_resolved = image_path.expanduser().resolve()
+            if redacted_path is None or redacted_path != image_resolved:
+                try:
+                    actual_hash = file_sha256(image_path)
+                except OSError as error:
+                    errors.append(f"cannot hash source image: {error}")
+                else:
+                    if actual_hash.casefold() != declared_hash.casefold():
+                        errors.append("sourceSha256 does not match source image")
+
+    # In the canonical manifest the annotation input is the redacted image,
+    # while sourceSha256 intentionally remains bound to the raw capture.  If
+    # the derived redacted hash has been declared, bind it to the actual
+    # annotation input instead of silently trusting the path.
+    declared_redacted_hash = manifest.get("redactedSha256")
+    if declared_redacted_hash is not None:
+        if not isinstance(declared_redacted_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", declared_redacted_hash):
+            errors.append("redactedSha256 must be a SHA-256 hex digest")
+        else:
             try:
-                actual_hash = file_sha256(image_path)
+                actual_redacted_hash = file_sha256(image_path)
             except OSError as error:
-                errors.append(f"cannot hash source image: {error}")
+                errors.append(f"cannot hash redacted image: {error}")
             else:
-                if actual_hash.casefold() != declared_hash.casefold():
-                    errors.append("sourceSha256 does not match source image")
+                if actual_redacted_hash.casefold() != declared_redacted_hash.casefold():
+                    errors.append("redactedSha256 does not match redacted image")
 
     declared_size = manifest.get("originalImageSize")
     if isinstance(declared_size, dict):
@@ -106,7 +159,14 @@ def hard_errors(
                 f"({declared_size.get('width')}x{declared_size.get('height')} != {width}x{height})"
             )
 
+    if require_approved:
+        if isinstance(manifest.get("redactedImage"), str) and "redactedSha256" not in manifest:
+            errors.append("redactedSha256 is required for the formal annotation gate")
+        errors.extend(capture_binding_errors(manifest, (width, height), require=True))
+
     annotations = manifest.get("annotations", [])
+    if not isinstance(annotations, list):
+        return ["annotations must be a list"]
     seen_ids: set[str] = set()
     caption_numbers: set[str] = set()
     for index, item in enumerate(annotations):
@@ -138,6 +198,23 @@ def hard_errors(
                 f"{label}: box ({x},{y},{w},{h}) is outside the {width}x{height} raw image"
             )
 
+        border = max(3, math.ceil(font_size * 0.16))
+        badge_w = font_size + 2 * border
+        badge_h = font_size + 2 * border
+        badge = badge_box(
+            x,
+            y,
+            badge_w,
+            badge_h,
+            width,
+            height,
+            bbox_width=w,
+            bbox_height=h,
+            badge_spec=item.get("badgePosition", item.get("badge")),
+        )
+        if badge is None:
+            errors.append(f"{label}: badge position is outside the {width}x{height} image")
+
         status = item.get("status", "proposed")
         if not isinstance(status, str) or status.casefold() not in KNOWN_STATUSES:
             errors.append(f"{label}: unknown annotation status {status!r}")
@@ -156,6 +233,8 @@ def hard_errors(
         if provenance is not None:
             if not isinstance(provenance, str) or provenance.casefold() not in KNOWN_PROVENANCE:
                 errors.append(f"{label}: unknown annotation provenance {provenance!r}")
+        if require_approved and not is_text(item.get("source", provenance)):
+            errors.append(f"{label}: source/provenance is required before the formal annotation gate")
 
         caption = item.get("caption")
         if not isinstance(caption, str) or not caption.strip():
@@ -189,18 +268,116 @@ def hard_errors(
     return errors
 
 
-def badge_box(bbox_x: int, bbox_y: int, badge_w: int, badge_h: int, img_w: int, img_h: int):
-    """Place the number badge just outside the box's top-left corner; fall back inward."""
+def _badge_point(spec: Any) -> tuple[float, float] | None:
+    if not isinstance(spec, dict):
+        return None
+    candidate = spec
+    if isinstance(spec.get("position"), dict):
+        candidate = spec["position"]
+    if not {"x", "y"} <= set(candidate):
+        return None
+    values = (candidate.get("x"), candidate.get("y"))
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in values):
+        return None
+    return float(values[0]), float(values[1])
+
+
+def _badge_anchor(spec: Any) -> str | None:
+    if not isinstance(spec, dict):
+        return None
+    value = spec.get("anchor", spec.get("placement", spec.get("position")))
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().casefold().replace("_", "-")
+    return normalized if normalized in {"top-left", "top-right", "bottom-left", "bottom-right"} else None
+
+
+def _badge_offset(spec: Any) -> tuple[float, float] | None:
+    if not isinstance(spec, dict) or spec.get("offset") is None:
+        return (0.0, 0.0)
+    value = spec.get("offset")
+    if not isinstance(value, dict) or not {"x", "y"} <= set(value):
+        return None
+    values = (value.get("x"), value.get("y"))
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) for item in values):
+        return None
+    return float(values[0]), float(values[1])
+
+
+def badge_box(
+    bbox_x: int,
+    bbox_y: int,
+    badge_w: int,
+    badge_h: int,
+    img_w: int,
+    img_h: int,
+    *,
+    bbox_width: int = 0,
+    bbox_height: int = 0,
+    badge_spec: Any = None,
+) -> tuple[int, int, int, int] | None:
+    """Resolve a bounded badge rectangle from the integrated annotation item.
+
+    With no optional position this preserves the existing top-left placement
+    and inward fallback.  ``badgePosition``/``badge`` may provide a direct
+    top-left ``x``/``y`` point, or a named anchor plus an optional ``offset``.
+    Explicit points fail closed when they leave the image so a reviewer can
+    adjust that same manifest and redraw it.
+    """
+
     gap = 4
-    x0, y0 = bbox_x - gap - badge_w, bbox_y - gap - badge_h
+    explicit_point = _badge_point(badge_spec)
+    offset = _badge_offset(badge_spec)
+    if offset is None:
+        return None
+    if explicit_point is not None:
+        x0, y0 = explicit_point[0] + offset[0], explicit_point[1] + offset[1]
+        if x0 < 0 or y0 < 0 or x0 + badge_w > img_w or y0 + badge_h > img_h:
+            return None
+        return (round(x0), round(y0), badge_w, badge_h)
+    if isinstance(badge_spec, dict) and ({"x", "y"} <= set(badge_spec) or isinstance(badge_spec.get("position"), dict)):
+        # A malformed direct point must not silently fall back to the default.
+        return None
+
+    anchor = _badge_anchor(badge_spec)
+    if anchor is None and badge_spec is not None:
+        if not isinstance(badge_spec, dict) or any(
+            key in badge_spec for key in ("anchor", "placement", "position", "offset")
+        ):
+            return None
+    if anchor == "top-right":
+        x0, y0 = bbox_x + bbox_width + gap, bbox_y - gap - badge_h
+    elif anchor == "bottom-left":
+        x0, y0 = bbox_x - gap - badge_w, bbox_y + bbox_height + gap
+    elif anchor == "bottom-right":
+        x0, y0 = bbox_x + bbox_width + gap, bbox_y + bbox_height + gap
+    else:
+        x0, y0 = bbox_x - gap - badge_w, bbox_y - gap - badge_h
+    x0 += offset[0]
+    y0 += offset[1]
+    if anchor is not None or badge_spec is not None:
+        # A named anchor may use the same safe inward fallback as the default;
+        # an explicit offset remains strict so it cannot hide a bad location.
+        if anchor is not None and (x0 < 0 or y0 < 0 or x0 + badge_w > img_w or y0 + badge_h > img_h):
+            x0, y0 = bbox_x + gap, bbox_y + gap
+            if x0 + badge_w > img_w:
+                x0 = bbox_x + gap - badge_w
+            if y0 + badge_h > img_h:
+                y0 = bbox_y + gap - badge_h
+        if x0 < 0 or y0 < 0 or x0 + badge_w > img_w or y0 + badge_h > img_h:
+            return None
+        return (round(x0), round(y0), badge_w, badge_h)
+
     if x0 >= 0 and y0 >= 0:
-        return (x0, y0, badge_w, badge_h)
-    x0, y0 = bbox_x + gap, bbox_y + gap  # inside top-left corner
+        return (round(x0), round(y0), badge_w, badge_h)
+    x0, y0 = bbox_x + gap, bbox_y + gap
     if x0 + badge_w > img_w:
         x0 = max(0, bbox_x + gap - badge_w)
     if y0 + badge_h > img_h:
         y0 = max(0, bbox_y + gap - badge_h)
-    return (x0, y0, badge_w, badge_h)
+    if x0 < 0 or y0 < 0 or x0 + badge_w > img_w or y0 + badge_h > img_h:
+        return None
+    return (round(x0), round(y0), badge_w, badge_h)
 
 
 def draw_cursor(draw: ImageDraw.ImageDraw, cursor: dict[str, Any], target: dict[str, Any]) -> None:
@@ -226,7 +403,13 @@ def draw_cursor(draw: ImageDraw.ImageDraw, cursor: dict[str, Any], target: dict[
         draw.polygon([tip, left, right], fill=stroke_color)
 
 
-def draw_annotations(manifest: dict[str, Any], image_path: Path, output_path: Path, stroke: int, font_size: int) -> None:
+def draw_annotations(
+    manifest: dict[str, Any], image_path: Path, output_path: Path, stroke: int, font_size: int
+) -> dict[str, Any]:
+    if file_alias(output_path, image_path):
+        raise ValueError("annotation output must not overwrite the parent image")
+    if output_path.exists():
+        raise ValueError("annotation output already exists; choose a new immutable output path")
     with Image.open(image_path) as source:
         if source.mode in ("RGBA", "LA", "P"):
             image = source.convert("RGB")
@@ -247,7 +430,20 @@ def draw_annotations(manifest: dict[str, Any], image_path: Path, output_path: Pa
         border = max(3, math.ceil(font_size * 0.16))
         badge_w = font_size + 2 * border
         badge_h = font_size + 2 * border
-        bx, by, bw, bh = badge_box(x, y, badge_w, badge_h, width, height)
+        badge = badge_box(
+            x,
+            y,
+            badge_w,
+            badge_h,
+            width,
+            height,
+            bbox_width=w,
+            bbox_height=h,
+            badge_spec=item.get("badgePosition", item.get("badge")),
+        )
+        if badge is None:
+            raise ValueError(f"annotation {item.get('id')!r}: badge position is outside the image")
+        bx, by, bw, bh = badge
         draw.rounded_rectangle([bx, by, bx + bw, by + bh], radius=4, fill=RED)
         draw.text(
             (bx + bw / 2, by + bh / 2),
@@ -260,6 +456,54 @@ def draw_annotations(manifest: dict[str, Any], image_path: Path, output_path: Pa
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path, format="PNG")
     print(f"ANNOTATED_IMAGE={output_path}")
+    parent_hash = file_sha256(image_path)
+    output_hash = file_sha256(output_path)
+    input_payload = annotation_input_payload(manifest, stroke=stroke, font_size=font_size)
+    provenance = {
+        "schema_version": 1,
+        "tool": "annotate.py",
+        "parentImage": str(manifest.get("redactedImage", image_path.name)),
+        "parentSha256": parent_hash,
+        "redactedImage": str(manifest.get("redactedImage", image_path.name)),
+        "redactedSha256": parent_hash,
+        "outputImage": str(manifest.get("annotatedImage", output_path.name)),
+        "annotatedImage": str(manifest.get("annotatedImage", output_path.name)),
+        "outputSha256": output_hash,
+        "annotatedSha256": output_hash,
+        "drawingInputSha256": annotation_input_sha256(manifest, stroke=stroke, font_size=font_size),
+        "inputSha256": annotation_input_sha256(manifest, stroke=stroke, font_size=font_size),
+        "drawingInputs": input_payload,
+    }
+    return provenance
+
+
+def validate_annotation_provenance(
+    provenance: dict[str, Any],
+    manifest: dict[str, Any],
+    parent_path: Path,
+    annotated_path: Path,
+    *,
+    stroke: int = 3,
+    font_size: int = 26,
+) -> list[str]:
+    """Validate the provenance emitted by ``draw`` against current inputs."""
+
+    errors: list[str] = []
+    parent_hash = file_sha256(parent_path)
+    output_hash = file_sha256(annotated_path)
+    declared_parent = provenance.get("parentSha256", provenance.get("redactedSha256"))
+    declared_output = provenance.get("outputSha256", provenance.get("annotatedSha256"))
+    if declared_parent != parent_hash:
+        errors.append("annotation provenance parent hash does not match redacted image")
+    if declared_output != output_hash:
+        errors.append("annotation provenance output hash does not match annotated image")
+    expected_inputs = annotation_input_payload(manifest, stroke=stroke, font_size=font_size)
+    expected_hash = annotation_input_sha256(manifest, stroke=stroke, font_size=font_size)
+    if provenance.get("drawingInputs") != expected_inputs:
+        errors.append("annotation provenance drawing inputs do not match manifest")
+    if provenance.get("drawingInputSha256", provenance.get("inputSha256")) != expected_hash:
+        errors.append("annotation provenance input hash does not match manifest")
+    return errors
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -272,6 +516,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     draw.add_argument("--output", required=True, type=Path)
     draw.add_argument("--stroke", type=int, default=3, help="Red box stroke width in px.")
     draw.add_argument("--font-size", type=int, default=26, help="Badge font size in px.")
+    draw.add_argument("--provenance-output", type=Path, help="Tool-generated parent/input/output provenance JSON.")
     draw.add_argument(
         "--require-approved",
         action="store_true",
@@ -281,6 +526,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     check = subparsers.add_parser("check", help="Validate the manifest without drawing.")
     check.add_argument("--image", required=True, type=Path)
     check.add_argument("--annotations", required=True, type=Path)
+    check.add_argument("--stroke", type=int, default=3, help="Red box stroke width used by draw.")
+    check.add_argument("--font-size", type=int, default=26, help="Badge font size used by draw.")
+    check.add_argument("--provenance", type=Path, help="Optional provenance JSON produced by draw.")
     check.add_argument(
         "--require-approved",
         action="store_true",
@@ -293,18 +541,71 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
         manifest = load_manifest(args.annotations)
-        errors = hard_errors(manifest, args.image, require_approved=args.require_approved)
+        errors = hard_errors(
+            manifest,
+            args.image,
+            manifest_path=args.annotations.expanduser().resolve(),
+            stroke=args.stroke,
+            font_size=args.font_size,
+            require_approved=args.require_approved,
+        )
         if errors:
             for message in errors:
                 print(f"annotate.py check: {message}", file=sys.stderr)
             return 1
+        if args.command == "check" and args.provenance is not None:
+            try:
+                provenance = json.loads(args.provenance.expanduser().resolve().read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                raise ValueError(f"cannot read provenance {args.provenance}: {error}") from error
+            if not isinstance(provenance, dict):
+                raise ValueError("provenance must be a JSON object")
+            output_value = provenance.get("outputImage", provenance.get("annotatedImage"))
+            if isinstance(output_value, str) and output_value.strip():
+                output_path = Path(output_value).expanduser()
+                if not output_path.is_absolute():
+                    # The provenance records manifest-relative image names in
+                    # the integrated schema.  Resolve those names from the
+                    # manifest location instead of the caller's CWD.
+                    output_path = args.annotations.expanduser().resolve().parent / output_path
+                output_path = output_path.resolve()
+            else:
+                output_path = args.image.expanduser().resolve()
+            provenance_errors = validate_annotation_provenance(
+                provenance,
+                manifest,
+                args.image.expanduser().resolve(),
+                output_path,
+                stroke=args.stroke,
+                font_size=args.font_size,
+            )
+            if provenance_errors:
+                for message in provenance_errors:
+                    print(f"annotate.py check: {message}", file=sys.stderr)
+                return 1
         if args.command == "draw":
             image_path = args.image.expanduser().resolve()
             annotation_path = args.annotations.expanduser().resolve()
             output_path = args.output.expanduser().resolve()
-            if output_path in {image_path, annotation_path}:
-                raise ValueError("annotation output must not overwrite raw image or annotation manifest")
-            draw_annotations(manifest, image_path, output_path, args.stroke, args.font_size)
+            if file_alias(output_path, annotation_path):
+                raise ValueError("annotation output must not overwrite annotation manifest")
+            provenance_path = (
+                args.provenance_output.expanduser().resolve() if args.provenance_output else None
+            )
+            if provenance_path is not None:
+                if file_alias(provenance_path, image_path) or file_alias(provenance_path, annotation_path):
+                    raise ValueError("provenance output must not overwrite annotation inputs")
+                if file_alias(provenance_path, output_path):
+                    raise ValueError("provenance output must be different from annotated image output")
+                if provenance_path.exists():
+                    raise ValueError("provenance output already exists; choose a new immutable output path")
+            provenance = draw_annotations(manifest, image_path, output_path, args.stroke, args.font_size)
+            if provenance_path is not None:
+                provenance_path.parent.mkdir(parents=True, exist_ok=True)
+                provenance_path.write_text(
+                    json.dumps(provenance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                )
+            print("PROVENANCE=" + json.dumps(provenance, ensure_ascii=False, sort_keys=True))
         else:
             print(
                 f"annotate.py check: OK ({len(manifest['annotations'])} annotations, "
