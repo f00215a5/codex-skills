@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
 
@@ -539,6 +540,181 @@ class AuditDeliveryTests(unittest.TestCase):
 
         self.assertEqual(missing_exit, 2)
         self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["docx"]["status"], "unreadable")
+
+    def test_image_evidence_accepts_current_relative_delivered_asset(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        docx = _write_docx(
+            self.root,
+            "image-current.docx",
+            table,
+            media=["image1.png"],
+            referenced_media=["image1.png"],
+        )
+        delivered = self.root / "delivered"
+        delivered.mkdir()
+        asset = delivered / "image1.png"
+        asset.write_bytes(b"image1.png")
+        evidence = self.root / "delivered-images.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "assets": [{"path": "delivered/image1.png", "sha256": _sha256(asset)}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = audit_delivery.audit_docx(docx, image_evidence_path=evidence)
+
+        self.assertEqual(report["image_evidence"]["status"], "pass")
+        self.assertEqual(report["image_evidence"]["assets"][0]["path"], "delivered/image1.png")
+        self.assertEqual(report["mechanical_status"], "pass")
+
+    def test_image_evidence_rejects_old_embedded_media(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        docx = _write_docx(
+            self.root,
+            "image-old-embedded.docx",
+            table,
+            media=["image1.png"],
+            referenced_media=["image1.png"],
+        )
+        delivered = self.root / "delivered"
+        delivered.mkdir()
+        asset = delivered / "image1.png"
+        asset.write_bytes(b"new-redacted-image")
+        evidence = self.root / "delivered-images.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "assets": [{"path": "delivered/image1.png", "sha256": _sha256(asset)}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = audit_delivery.audit_docx(docx, image_evidence_path=evidence)
+
+        self.assertEqual(report["image_evidence"]["status"], "fail")
+        self.assertIn("image_evidence_embedded_media_not_allowlisted", report["image_evidence"]["reason_codes"])
+        self.assertEqual(report["mechanical_status"], "failed")
+
+    def test_image_evidence_rejects_changed_asset_since_freeze(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        docx = _write_docx(
+            self.root,
+            "image-stale-list.docx",
+            table,
+            media=["image1.png"],
+            referenced_media=["image1.png"],
+        )
+        delivered = self.root / "delivered"
+        delivered.mkdir()
+        asset = delivered / "image1.png"
+        asset.write_bytes(b"frozen-image")
+        frozen_hash = _sha256(asset)
+        asset.write_bytes(b"changed-after-freeze")
+        evidence = self.root / "delivered-images.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "assets": [{"path": "delivered/image1.png", "sha256": frozen_hash}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = audit_delivery.audit_docx(docx, image_evidence_path=evidence)
+
+        self.assertEqual(report["image_evidence"]["status"], "fail")
+        self.assertIn("image_evidence_asset_hash_mismatch", report["image_evidence"]["reason_codes"])
+
+    def test_image_evidence_rejects_raw_asset_and_protects_inputs(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        docx = _write_docx(
+            self.root,
+            "image-raw.docx",
+            table,
+            media=["image1.png"],
+            referenced_media=["image1.png"],
+        )
+        raw_dir = self.root / "raw"
+        raw_dir.mkdir()
+        asset = raw_dir / "image1.png"
+        asset.write_bytes(b"image1.png")
+        evidence = self.root / "delivered-images.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "assets": [{"path": "raw/image1.png", "sha256": _sha256(asset)}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        original_evidence = evidence.read_bytes()
+        original_asset = asset.read_bytes()
+
+        report = audit_delivery.audit_docx(docx, image_evidence_path=evidence)
+        self.assertEqual(report["image_evidence"]["status"], "fail")
+        self.assertIn("image_evidence_raw_path_forbidden", report["image_evidence"]["reason_codes"])
+
+        overwrite_manifest = audit_delivery.main(
+            ["--docx", str(docx), "--output", str(evidence), "--image-evidence", str(evidence)]
+        )
+        overwrite_asset = audit_delivery.main(
+            ["--docx", str(docx), "--output", str(asset), "--image-evidence", str(evidence)]
+        )
+        self.assertEqual(overwrite_manifest, 2)
+        self.assertEqual(overwrite_asset, 2)
+        self.assertEqual(evidence.read_bytes(), original_evidence)
+        self.assertEqual(asset.read_bytes(), original_asset)
+
+        absolute_evidence = self.root / "invalid-path-images.json"
+        absolute_evidence.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "assets": [{"path": str(asset), "sha256": _sha256(asset)}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        overwrite_invalid = audit_delivery.main(
+            ["--docx", str(docx), "--output", str(asset), "--image-evidence", str(absolute_evidence)]
+        )
+        self.assertEqual(overwrite_invalid, 2)
+        self.assertEqual(asset.read_bytes(), original_asset)
+
+    def test_output_conflict_falls_back_when_relative_asset_resolution_fails(self) -> None:
+        table = _table([1000], [[(1, 1000)]])
+        docx = _write_docx(self.root, "image-resolution-fallback.docx", table)
+        delivered = self.root / "delivered"
+        delivered.mkdir()
+        asset = delivered / "image1.png"
+        asset.write_bytes(b"delivered-image")
+        evidence = self.root / "delivered-images.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "assets": [{"path": "delivered/image1.png", "sha256": _sha256(asset)}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        original_asset = asset.read_bytes()
+
+        with patch.object(audit_delivery, "_resolve_image_asset", return_value=None):
+            overwrite_exit = audit_delivery.main(
+                ["--docx", str(docx), "--output", str(asset), "--image-evidence", str(evidence)]
+            )
+
+        self.assertEqual(overwrite_exit, 2)
+        self.assertEqual(asset.read_bytes(), original_asset)
 
 
 if __name__ == "__main__":

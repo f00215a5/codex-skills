@@ -52,3 +52,5 @@
 3. 頁面邊界、截圖比例、紅框可讀性、caption 相鄰性與跨頁行為正常。
 
 渲染工具、CJK glyph 與審核環境的結果只在對話或外部 review artifact 回報，不寫入 DOCX；依 [render-and-annotation-qa.md](render-and-annotation-qa.md) 執行兩道 QA。
+
+後續輪次可依 [incremental-qa-workflow.md](incremental-qa-workflow.md) 承接 baseline 中已通過或使用者明示接受、且 hash／依賴可驗證的未變資產語意結果，但版面驗收仍逐頁檢查整份最終文件；版型、builder、margin、字型或圖片尺寸規則等全域變更會使所有頁面受影響。hash 不能代替像素位置、裁切或可讀性的檢查。

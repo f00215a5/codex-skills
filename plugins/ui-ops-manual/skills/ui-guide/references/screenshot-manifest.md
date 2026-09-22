@@ -1,6 +1,6 @@
 # 每張截圖 manifest 合約
 
-在建立或驗收任何 raw／redacted／annotated 截圖前閱讀。每一張截圖各自保存一份 JSON；不要把不同頁面、不同狀態或不同擷取批次共用同一組座標。資產凍結與變更失效依賴見 [incremental-qa-workflow.md](incremental-qa-workflow.md)。`schema_version` 目前固定為 `1`。
+在建立或驗收任何 raw／redacted／annotated 截圖前閱讀。每一張截圖各自保存一份 JSON；不要把不同頁面、不同狀態或不同擷取批次共用同一組座標。資產凍結與變更失效依賴見 [incremental-qa-workflow.md](incremental-qa-workflow.md)。同一 QA record 的 `assetLedger` 可另外記錄 redacted／annotated／caption hash 與不可覆寫 checkpoint；hash／manifest 通過只代表可回溯的機械證據，不代表像素或操作語意 pass。`schema_version` 目前固定為 `1`。
 
 ## 最小格式
 
@@ -64,6 +64,8 @@
 
 每次重新擷取都要為該張圖建立新的 `captureState.id`、重新計算 `sourceSha256`，並重新測量該張圖的 redaction／annotation bbox。不能把前一張圖的固定 y range、列距或舊座標批量套用到另一個頁面、日期狀態、空白表單或捲動位置；即使尺寸相同，raw hash 不同也代表需要重新看圖和重新測量。
 
+`captureState` 的內容核對要對應當下實際可見的視窗／頁面、載入完成與資料狀態，以及目標控制項或可見標題；尚未開啟的表單不能標成表單，短暫 loading 空清單不能直接標成無資料。若頁面或容器有重複背景值、巢狀垂直／水平捲動，逐張記錄並確認所有可到達內容，不以 `fullPage` 參數或 `captureKind` 名稱代替直接內容檢查。
+
 工具允許且畫面仍是該次 capture 的目前 DOM 時，優先以 `getBoundingClientRect()` 或目前文字的 `Range.getBoundingClientRect()` 取得控制項／敏感值的實際邊界，再依截圖與 CSS viewport 寬高比例換算。文字範圍可以只用來取得位置與尺寸，不要把文字值寫進 manifest、圖說或報告：
 
 ```javascript
@@ -75,6 +77,59 @@ return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 ```
 
 上例只在目前工具契約允許 evaluate／DOM 讀取時使用；回傳值應是數值 bbox，不是原始文字。`getBoundingClientRect()` 得到的是 viewport 座標，不能直接假定 PNG／CSS 是 1:1，也不能全局機械套用 `pngWidth / viewportWidth`：先確認 device pixel ratio、scrollbar 是否裁除、full-page 是否重新排版、固定 header 是否覆蓋，以及工具對 scroll 位移的定義，再依該張圖的已知控制項逐張校正。連續 viewport 或內部捲動區要逐張納入捲動位移；每張 raw／redacted／annotated 都要在 100% 做 pixel-level 位置檢查。不能以 DOM 不可用為由猜測固定座標，也不能在網頁內執行遮罩；先取得 raw，再在受限 QA 工作區的離線副本完成 redacted 和 annotated PNG。
+
+新 DOM 流程只接受已核對的 `viewport-sequence` 和已知 `clip`。從同一 `captureState` 的 CSS viewport／clip 尺寸與 canonical PNG 實際像素尺寸導出各軸 scale；`devicePixelRatio` 只保留 provenance，不可再乘一次。可直接呼叫既有標準函式庫 helper（從 `scripts/` 載入）：
+
+```python
+from validate_screenshot_manifest import transform_css_viewport_bbox
+
+candidate = transform_css_viewport_bbox(
+    {"x": 591.7, "y": 196.8, "width": 68.64, "height": 28},
+    {
+        "status": "calibrated",
+        "sourceSpace": "css-viewport",
+        "targetSpace": "png-pixels",
+        "viewportSize": {"width": 1536, "height": 674},
+        "clip": {"x": 0, "y": 0, "width": 1536, "height": 674},
+        "screenshotSize": {"width": 1521, "height": 667},
+        "scrollOffset": {"x": 0, "y": 0},
+        "devicePixelRatio": 1.25,
+    },
+)
+```
+
+對應的 manifest provenance 至少保留同一狀態和來源 hash；以下是欄位形狀（`bbox` 是 helper 回傳的候選值，仍須保持 pending）：
+
+```json
+{
+  "captureState": {
+    "id": "create-task-viewport-01",
+    "rawSha256": "<canonical PNG sha256>",
+    "coordinateTransform": {
+      "status": "calibrated",
+      "sourceSpace": "css-viewport",
+      "targetSpace": "png-pixels",
+      "viewportSize": {"width": 1536, "height": 674},
+      "clip": {"x": 0, "y": 0, "width": 1536, "height": 674},
+      "screenshotSize": {"width": 1521, "height": 667},
+      "scrollOffset": {"x": 0, "y": 0},
+      "devicePixelRatio": 1.25
+    }
+  },
+  "annotations": [{
+    "source": "dom",
+    "bbox": {"x": 585.921692, "y": 194.756086, "width": 67.967216, "height": 27.709199},
+    "status": "pending",
+    "coordinateProvenance": {
+      "captureStateId": "create-task-viewport-01",
+      "sourceSha256": "<same canonical PNG sha256>",
+      "sourceBbox": {"x": 591.7, "y": 196.8, "width": 68.64, "height": 28}
+    }
+  }]
+}
+```
+
+把 `candidate["bbox"]` 只當作待人工確認的候選框；manifest 要同時保存 `captureState.id`、`rawSha256`、`coordinateTransform`，以及 annotation 的 `coordinateProvenance.captureStateId`、`sourceSha256` 和原始 `sourceBbox`。`dom-manual-adjusted` 另記 `adjustmentReason`／`transformedBbox`，輸出仍維持 `pending`；若實際 bbox 與重算結果不同，必須先修正 mapping 或重新擷取，不能只把 status 改成 `checked`，直接檢視也不能繞過座標 gate。`status: "calibrated"` 只代表 capture 尺寸與 clip 來源已核對，不是框線對位或隱碼的 visual pass；full-page 的 sticky／捲動重排、未知 viewport／clip、舊 hash、未知 annotation source 或缺少 transform 都應被 gate 阻擋，不能猜 offset。
 
 若 CUA 截圖契約回傳 `Uint8Array`（或該契約明確允許的 Node `Buffer`），這些 bytes 可以在**同一個 runtime** 用 Node 的 `fs/promises.writeFile` 寫入本機受限 QA 路徑，再用該落地檔計算 hash：
 
@@ -114,6 +169,8 @@ manifest 的 `sourceImage` 應指向這份 canonical PNG，`sourceSha256`／`cap
 ```text
 <bundled-python> "<skill>/scripts/validate_screenshot_manifest.py" --manifest "<qa>/create-task.json" --base-dir ".." --output "<qa>/create-task-manifest-validation.json"
 ```
+
+新 DOM 標註流程在同一命令追加 `--require-coordinate-provenance`，並讀取輸出的 `coordinate_provenance.status` 與 `manifest_status`；不能只看 exit code，也不能以這個機械 gate 取代逐張實圖檢查。舊 manifest 未使用此 flag 時維持相容，但不得把它當成新 DOM 流程的完成證據。
 
 `--base-dir` 是相對於 manifest 所在目錄的圖片根目錄；報告輸出必須是新檔，不能覆寫 manifest 或三張輸入圖片。工具驗證：
 
