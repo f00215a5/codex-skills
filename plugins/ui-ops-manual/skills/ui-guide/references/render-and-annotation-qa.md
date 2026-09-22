@@ -34,7 +34,7 @@
 
 manifest 必須保留**原始截圖尺寸**、控制項名稱、座標、caption 編號、標註來源與驗收狀態。每個紅框／游標對應一筆資料；圖說只能使用已驗收項目的 id 與控制項名稱。
 
-能取 DOM 時，先以 `getBoundingClientRect` 取得控制項邊界。把 CSS viewport 座標換算為候選框前，先確認 device pixel ratio、scrollbar 裁切、full-page 重排、固定 header 覆蓋和工具的 scroll 定義；不要全局假設 1:1，也不要機械套用 `pngWidth / viewportWidth`。一般 viewport 截圖可在確認縮放模型後換算 `x = rect.left × pngWidth / viewportWidth`、`y = rect.top × pngHeight / viewportHeight`；若有 scrollbar 裁除或內容仍 1:1，應依已知控制項逐張校正。全頁截圖須依實際輸出尺寸及工具定義換算文件座標（含適用的水平／垂直捲動），不能用全頁高度除以 viewport 高度作為像素倍率；固定元素、內部捲動區和連續 viewport 需逐張對照實際圖像並在 100% 做 pixel-level 檢查。僅在工具契約允許時讀取 DOM。人工操作只做**最終微調**，並將來源改為 `manual-adjusted`。
+能取 DOM 時，先以 `getBoundingClientRect` 取得控制項邊界。把 CSS viewport 座標換算為候選框前，先確認 device pixel ratio、scrollbar 裁切、full-page 重排、固定 header 覆蓋和工具的 scroll 定義；不要全局假設 1:1，也不要機械套用 `pngWidth / viewportWidth`。一般 viewport 截圖可在確認縮放模型後換算 `x = rect.left × pngWidth / viewportWidth`、`y = rect.top × pngHeight / viewportHeight`；若有 scrollbar 裁除或內容仍 1:1，應依已知控制項逐張校正。全頁截圖須依實際輸出尺寸及工具定義換算文件座標（含適用的水平／垂直捲動），不能用全頁高度除以 viewport 高度作為像素倍率；固定元素、內部捲動區和連續 viewport 需逐張對照實際圖像並在 100% 做 pixel-level 檢查。僅在工具契約允許時讀取 DOM。人工操作只做**最終微調**；新 DOM 流程要保留 source bbox、transform、capture id／raw hash，使用 `dom-manual-adjusted` 時另記調整原因，並維持標註 `pending` 直到直接檢視。若實際 bbox 與重算結果不同，先修正 mapping 或重新擷取，不能只改 status 繞過座標 gate。沒有可證明的 viewport／clip 轉換時不能猜座標。
 
 要遮蔽或標註畫面上的實際文字時，在工具契約允許的目前 DOM context 內，優先用目前節點的 `Range.getBoundingClientRect()` 取得文字邊界，再只回傳數值座標；不要把文字值回傳或寫入 manifest：
 
@@ -53,9 +53,13 @@ return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 <bundled-python> "<skill>/scripts/validate_screenshot_manifest.py" --manifest "<qa>/one.json" --base-dir ".." --output "<qa>/one-manifest-validation.json"
 ```
 
+新 DOM 標註在此命令追加 `--require-coordinate-provenance`，並讀取 `coordinate_provenance.status` 和 `manifest_status`；`calibrated` 只證明尺寸／clip provenance，不證明像素對位或隱碼語意。full-page、未知來源、舊 hash 或缺 transform 需 blocked，不能用 helper 呼叫冒充 visual pass。
+
 validator 只驗 hash、PNG 尺寸、bbox 範圍、protected area 不重疊、id／caption／source／狀態欄位；`geometry_status: "pass"` 不等於隱碼或標註語意通過。`manifest_status: "pass"` 也只代表 manifest 的機械檢查與明示 review state，`semantic_review` 仍為 `not_performed`。pending 預覽不得報成 manifest pass；builder 仍要逐張 100% 直接檢視，並由 independent reviewer 完成獨立交付審核。
 
-在 **DOCX 建置前**，每張 annotated PNG 輸出後都要直接開圖，將 raw + annotated 以 **100%** 並排逐張檢視；manifest 的 `checked` 不能代替這項實圖檢查。以該張 capture state／source hash 對照 caption 所描述的實際畫面狀態，狀態不符或 caption 沿用舊圖時退回重取。確認 badge／紅框不壓控制項文字，mask 只覆蓋實際敏感值及必要的文字 padding，不把整欄塗成黑條；座標落在空白或偏離控制項時退回重測。逐筆通過以下清單才將 `status` 設為 `verified`：
+在 **DOCX 建置前**，每張新建或受影響的 annotated PNG 輸出後都要直接開圖，將 raw + annotated 以 **100%** 並排逐張檢視；manifest 的 `checked` 不能代替這項實圖檢查。以該張 capture state／source hash 對照 caption 所描述的實際畫面狀態，狀態不符或 caption 沿用舊圖時退回重取。確認 badge／紅框不壓控制項文字，mask 只覆蓋實際敏感值及必要的文字 padding，不把整欄塗成黑條；座標落在空白或偏離控制項時退回重測。逐筆通過以下清單才將 `status` 設為 `verified`：
+
+代表圖除上述原圖檢視外，必須先嵌入預定 DOCX／容器並以最終 renderer 實際檢查縮放後的完整主圖、操作位置、caption 與必要 detail 是否可讀；這是校準後續小批次的可讀性依據。後續只對新建或受影響的圖片重做語意檢查；未變且 asset ledger 的 hash／依賴可驗證者依 delta review 承接原結果。
 
 1. raw 圖中確實有 manifest 指定的控制項，且紅框完整框住該控制項，不框到鄰近控制項或空白。
 2. 紅框編號、manifest id 與 caption 編號三者一致；caption 使用畫面上的實際名稱。
@@ -89,6 +93,6 @@ UI 操作說明書的 renderer 工作根目錄、Word／LibreOffice fallback 與
 
 ## 3. DOCX 版面 QA（在標註驗收後）
 
-使用 `word-render` 產生最終 PNG，逐頁 100% 檢查頁面裁切、截圖縮放、框線可讀性、caption 與圖像相鄰性、表格與分頁；表格置中與尺寸彈性判準見 [visual-consistency-standard.md](visual-consistency-standard.md)。DOCX 版面 QA 發現圖片框線偏移時，先回到 raw + redacted + annotated manifest 判斷是原圖座標、圖片裁切，還是文件版面問題；修正後重新執行兩道驗收。
+使用 `word-render` 產生最終 PNG，逐頁 100% 檢查**整份**文件的頁面裁切、截圖縮放、框線可讀性、caption 與圖像相鄰性、表格與分頁；表格置中與尺寸彈性判準見 [visual-consistency-standard.md](visual-consistency-standard.md)。DOCX 版面 QA 發現圖片框線偏移時，先回到 raw + redacted + annotated manifest 判斷是原圖座標、圖片裁切，還是文件版面問題；修正後重新執行受影響圖片的語意驗收與整份版面檢查。未變資產可承接語意 review，但 hash 不能代替像素／版面檢查；全域版面變更時所有頁面均須重檢。
 
 同一輪 renderer 檢查每個操作小節的真正 Word numbering：第一個可見步驟必須從 1 開始，後續步驟依序增加，下一小節也必須重新從 1 開始。若畫面仍接續前節，回到 [default-document-layout.md](default-document-layout.md) 重新建立獨立 numbering definition，確認各使用 level 的重設設定，再依最新 renderer 重跑；不得用普通文字的「1.」前綴假裝編號。

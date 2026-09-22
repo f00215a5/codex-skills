@@ -1,6 +1,6 @@
 # 獨立交付審核規範
 
-在準備交付或宣稱 UI 操作說明書完成前閱讀本規格。審核是產製（builder）之後的獨立關卡；產製者留下的 `verified`、`checked` 或自評 checklist 只能作為線索，不能作為通過依據。
+在準備交付或宣稱 UI 操作說明書完成前閱讀本規格。審核是產製（builder）之後的獨立關卡；產製者留下的 `verified`、`checked` 或自評 checklist 只能作為線索，不能作為通過依據。每輪都保留整份最終文件的版面檢查；只有依賴與 hash 均可驗證且未變的內容，才可在 delta review 承接既有語意結論。
 
 ## 審核者與輸入
 
@@ -10,13 +10,19 @@ reviewer 直接讀取下列輸入：
 
 - 使用者需求、已確認的範圍、逐功能覆蓋表與目前 `ui-guide` 規範；依 [screenshot-completeness-workflow.md](screenshot-completeness-workflow.md) 比對每項必要操作／狀態的主圖及文件位置。
 - 最終 DOCX 與其最終 renderer 產生的頁面圖片。
-- 交付文件中使用的 redacted／annotated 圖片及其 manifest。
+- 交付文件中使用的 redacted／annotated 圖片及其 manifest；delta review 對 `changed`／`affected` 直接重看，`inherited` 只在 baseline 語意項目已通過／明示接受且現檔 hash／依賴相符時引用原始直接檢查證據。
 - 每張圖片的 `validate_screenshot_manifest.py` 報告；它只作 hash／尺寸／bbox 的機械證據，不能取代 reviewer 對圖片內容的直接檢視。
-- 受限 QA 工作區的原始證據，用來比對來源與遮蔽完整性。
+- 受限 QA 工作區的原始證據，用來比對新增／受影響來源與遮蔽完整性；承接項目仍須保留可追溯的 baseline 證據。
 
-每輪 review 都依 [incremental-qa-workflow.md](incremental-qa-workflow.md) 保留唯一累積 finding ledger；將上一輪未解缺陷與新 findings 合併後區分阻擋項與非阻擋項，逐項標記修正證據，再按依賴重新檢查受影響清單。阻擋項未修正或證據不足時不得 pass；不影響主要流程的非阻擋項可在 `reason`／`evidence` 記為 accepted limitation，保留可用成品。最新訊息或最新檔案不能自動清除先前未解的缺陷。
+每輪 review 都依 [incremental-qa-workflow.md](incremental-qa-workflow.md) 保留唯一累積 finding ledger；將上一輪未解缺陷與新 findings 合併後區分阻擋項與非阻擋項，逐項標記修正證據，再按依賴重新檢查受影響清單。第二輪先記錄 baseline 的文件／review artifact hash、承接的已通過語意項目或使用者明示接受項目、`changed`、`affected`、`inherited` 資產與理由；`inherited` 僅承接語意 review，不承接版面檢查。上一輪 `fail`、`blocked`、`pending` 或未解 finding 不可承接；使用者接受的限制不得冒充獨立 reviewer pass。阻擋項未修正或證據不足時不得 pass；不影響主要流程的非阻擋項可在 `reason`／`evidence` 記為 accepted limitation，保留可用成品。最新訊息或最新檔案不能自動清除先前未解的缺陷，也不能改寫舊 reviewer 或 hash。
 
 原始圖片可供 reviewer 在受限工作區讀取，但不得複製到交付封裝、DOCX 或 review artifact 內容；敏感原值不得出現在 caption、替代文字、metadata、檔名或報告文字。報告只寫不含原值的類別、雜湊、檔案識別與定位資訊。
+
+## 第二輪 delta review
+
+baseline 必須是上一輪獨立 review artifact 中個別已通過且沒有未解 finding 的語意項目，或使用者明確接受的範圍／限制；artifact 的 `fail`、`blocked`、`pending` 與未解項目不可作為 baseline。使用者接受內容只能按明示範圍承接，不得冒充獨立 reviewer pass；沒有可驗證 baseline 時按首輪完整語意 review。review artifact 可在既有 schema 外記錄 `baseDocxSha256`、`baseReviewArtifactSha256`（若有）、baseline 來源，以及 `changed`／`affected`／`inherited` 清單。`inherited` 項目要列現檔 hash、capture state、依賴核對結果與承接理由；任何不符、unknown 或全域版面變更都列入 `affected`，不得以 hash 當像素或語意 pass。
+
+reviewer 每輪仍直接檢查最終 renderer 的全部頁面，包含分頁、表格容器位置、圖片縮放／裁切、紅框可讀性與 caption 相鄰性。版型、builder、margin、字型或圖片尺寸規則變更時，所有頁面均為 `affected`；局部變更才依依賴圖譜縮小語意重審範圍。新 artifact 必須使用實際 reviewer id 與現檔 hash，不假造 reviewer、不改舊 review artifact。
 
 ## 四類檢查
 
@@ -121,22 +127,33 @@ reviewer 依原始證據和成品逐項判斷，不把 OCR、像素差異、DOCX
 - `overall: "blocked"`：reviewer 尚未完成、原始證據不可讀、必要頁面／圖片缺失或任一雜湊無法比對。無 reviewer 時將 `reviewer.id` 設為 `pending`，並在報告及交付對話寫明 `independent review pending`。
 - 審核 pending 時，應持續完成所有不依賴 reviewer 的已授權工作；若需要交付目前產物，將檔名、資料夾或交付對話清楚標示 `draft`。`draft` 是交付狀態，不是 `overall` 值，也不得宣稱已完成審核。
 
-交付文件或任一 `reviewed_files`（`page`、`image`、`support`）改動後，重新計算 artifact 與所有 reviewed files hashes，受影響檢查回到 `blocked` 或待審核狀態，再由 reviewer 重跑。不要沿用舊 artifact 的 `pass`。
+交付文件或任一 `reviewed_files`（`page`、`image`、`support`）改動後，重新計算新 artifact 與現檔 hashes；受影響檢查回到 `blocked` 或待審核狀態，未變且依賴／hash 可驗證的語意項目才可引用 baseline，再由 reviewer 重跑整份版面檢查。不要沿用舊 artifact 的 `pass`，也不要把 inherited 清單當成 reviewer 的身分或人工檢查替代。
 
 ## 人工與程式檢查邊界
 
-使用 [audit_delivery.py](../scripts/audit_delivery.py) 產生唯讀結構報告，再交給 reviewer 與其他證據一起判讀：
+使用 [audit_delivery.py](../scripts/audit_delivery.py) 產生唯讀結構報告，再交給 reviewer 與其他證據一起判讀。CLI 的 `--image-evidence` 仍可省略以維持舊版／無截圖 audit 的相容性；本技能含截圖的 build 後既有 audit 則應從同一 QA record 的 `assetLedger` 凍結資料導出並帶入，不另維護第二份資產真相或增加 review 輪次。清單路徑是相對於清單檔、每個項目只有交付圖片路徑和凍結後計算的 SHA-256，例如：
 
-```text
-<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure.json" --require-default-layout
+```json
+{
+  "schema_version": 1,
+  "assets": [
+    {"path": "delivered/redacted-001.png", "sha256": "<sha256>"}
+  ]
+}
 ```
 
-本次接受 plugin 預設且沒有自訂版型時，上述兩次命令都要加 `--require-default-layout`，第二次必須沿用第一次的選擇；它只檢查 body 第一個資料表（必要時跳過明確的單格巢狀 layout container）首列是否為三欄 `版本`／`日期`／`更新內容`。使用者明示改變更新紀錄位置或表頭時，兩次命令都可省略，但要在 QA record 記錄理由。這個 opt-in gate 只產生機械 failure code，不證明表格完整格式、更新內容或其他文件語意。
+```text
+<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure-with-images.json" --image-evidence "<qa>/delivered-images.json" --require-default-layout
+```
+
+工具會確認清單資產仍與宣告 hash 相符，且 DOCX 內每個嵌入媒體的 hash 都在白名單；清單內的 `raw`／`raw-original` 路徑會失敗，logo 或 diagram 可列入交付清單。這只證明位元相同與清單未過期，不能證明隱碼、像素或操作語意通過；輸出必須使用新檔名，不能覆寫 DOCX、清單或清單資產。
+
+本次接受 plugin 預設且沒有自訂版型時，上述 build 後 audit 與下方 review validation 兩次命令都要加 `--require-default-layout`，第二次也沿用同一份 `--image-evidence` 清單；它只檢查 body 第一個資料表（必要時跳過明確的單格巢狀 layout container）首列是否為三欄 `版本`／`日期`／`更新內容`。使用者明示改變更新紀錄位置或表頭時，這兩次命令都可省略，但要在 QA record 記錄理由。這個 opt-in gate 只產生機械 failure code，不證明表格完整格式、更新內容或其他文件語意。
 
 reviewer 完成上述 review JSON 後，再檢查紀錄與檔案是否一致：
 
 ```text
-<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --output "<qa>/review-validation.json" --require-default-layout
+<bundled-python> "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --output "<qa>/review-validation.json" --image-evidence "<qa>/delivered-images.json" --require-default-layout
 ```
 
 第二次輸出使用不同檔名，不能覆寫已被 review JSON 引用及計算雜湊的 `structure.json`。工具的 `mechanical_status` 表示結構檢查結果，`independent_review.status` 表示審核紀錄的完整性與檔案綁定檢查；兩者都不等於工具親自完成內容或視覺審核。`manual_review` 項目交由 reviewer 判讀，`failed` 項目需修正，或由 reviewer 核實是否屬使用者／版型已明示的合法例外並記錄依據。例如動態表寬與合法合併儲存格不應僅因無法機械判定就永遠卡住交付。

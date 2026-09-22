@@ -9,20 +9,20 @@ description: Use when creating or revising a system UI 操作說明書, user man
 
 ## 產製路由與必要 gate
 
-依序完成「範圍確認 → 單張完整截圖端到端實測 → 證據與隱碼 → 文件建置 → renderer／版面 QA → 獨立交付審核」。每一關留下可追溯結果；各模型可調整內容分段與版面細節，但不能跳過證據、隱碼、渲染或審核關卡。以下 refs 依階段必讀，不得只讀最新 review 訊息或只按關鍵字挑選：
+依序完成「範圍盤點與最小代表案例矩陣骨架 → 一張代表圖端到端實測與嵌入可讀性 → 小批次證據與隱碼 → 建置前完成語意 inventory 核對 → 文件建置 → renderer／完整版面 QA → 獨立交付審核」。每一關留下可追溯結果；各模型可調整內容分段與版面細節，但不能跳過證據、隱碼、渲染或審核關卡。以下 refs 依階段必讀，不得只讀最新 review 訊息或只按關鍵字挑選：
 
-整改也依此順序推進：每輪先判斷下一步是否能實質提高讀者完成主要流程的可用性；原始證據、隱碼或標註存在阻擋項時，不得進入文件建置／渲染。優先修正阻擋項並保留最近可用基底；連續同類返工沒有有效改善時停止相同策略，改做最小局部修復、依使用者已明示的範圍縮限，或如實回報阻擋，不得無限重建或把有阻擋的成品當成 pass。
+整改也依此順序推進：每輪先判斷下一步是否能實質提高讀者完成主要流程的可用性；原始證據、隱碼或標註存在阻擋項時，不得進入文件建置／渲染。只讓受影響依賴失效並重做；未變且 hash／依賴可驗證的資產可承接既有語意結果。保留最近可用基底；連續同類返工沒有有效改善時停止相同策略，改做最小局部修復、依使用者已明示的範圍縮限，或如實回報阻擋，不得無限重建或把有阻擋的成品當成 pass。
 
-- **取證前**閱讀 [references/screenshot-completeness-workflow.md](references/screenshot-completeness-workflow.md)、[references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md)、[references/screenshot-manifest.md](references/screenshot-manifest.md) 與 [references/incremental-qa-workflow.md](references/incremental-qa-workflow.md)。實際系統截圖是預設；示意／重繪 UI 只有在使用者明示時才可使用。身分 ID、地址、保單號、帳單號、合約號等預設遮蔽；金額預設保留。
+- **取證前**閱讀 [references/screenshot-completeness-workflow.md](references/screenshot-completeness-workflow.md)、[references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md)、[references/screenshot-manifest.md](references/screenshot-manifest.md) 與 [references/incremental-qa-workflow.md](references/incremental-qa-workflow.md)。先依功能 → 主／子配置區 → 造成獨特操作的條件狀態建立盤點與最小代表案例矩陣；共用流程只解說一次，差異以表格記錄。實際系統截圖是預設；示意／重繪 UI 只有在使用者明示時才可使用。身分 ID、地址、保單號、帳單號、合約號等預設遮蔽；金額預設保留。
 - **開始排版／build 前**閱讀 [references/default-document-layout.md](references/default-document-layout.md) 與 [references/visual-consistency-standard.md](references/visual-consistency-standard.md)。plugin 規範決定文件結構；參照文件只提供可重用的視覺標準。表格以容器可用內容區為基準置中，寬高可依內容調整。
 - **標註、renderer QA 前**閱讀 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md) 與 [references/safe-word-render-policy.md](references/safe-word-render-policy.md)。
-- **準備交付／review 前**閱讀 [references/independent-delivery-review.md](references/independent-delivery-review.md)。reviewer 直接讀取需求、成品與原始證據，不採信 builder 的 `verified`；無獨立 reviewer 時明確標記 `independent review pending`，可繼續其他工作，檔名、資料夾或交付對話只能將產物標示 `draft`。
+- **準備交付／review 前**閱讀 [references/independent-delivery-review.md](references/independent-delivery-review.md)。第二輪以既有通過 review 或使用者明確接受的範圍／限制為基準；保持整份版面檢查，只有 hash 與依賴均可驗證且未變的內容才可承接語意 review。reviewer 直接讀取需求、成品與原始證據，不採信 builder 的 `verified`；無獨立 reviewer 時明確標記 `independent review pending`，可繼續其他工作，檔名、資料夾或交付對話只能將產物標示 `draft`。
 
-擷取前必讀 [references/screenshot-completeness-workflow.md](references/screenshot-completeness-workflow.md)：先跑通完整頁面擷取、隱碼、紅框／編號、嵌入及渲染，再依 [references/incremental-qa-workflow.md](references/incremental-qa-workflow.md) 由一張代表圖校準後按畫面與狀態小批次製作。完整頁面是主圖，局部放大只能補充；依已確認功能逐項驗收，不能以草稿或少量補圖結束尚可繼續的工作。
+擷取前必讀 [references/screenshot-completeness-workflow.md](references/screenshot-completeness-workflow.md)：先跑通完整頁面擷取、隱碼、紅框／編號、嵌入及渲染，再依 [references/incremental-qa-workflow.md](references/incremental-qa-workflow.md) 由一張代表圖校準實際嵌入可讀性後按畫面與狀態小批次製作。完整頁面是主圖，局部放大只能補充；依代表案例矩陣逐項驗收，不能以草稿或少量補圖結束尚可繼續的工作。
 
 每張圖片的 raw／redacted／annotated 路徑、source SHA、capture state、座標與狀態，統一依 [references/screenshot-manifest.md](references/screenshot-manifest.md) 保存。使用者在目前任務已接受預設或明示略過範圍確認時，沿用該確認，不重複詢問同一授權。
 
-QA record 同時記錄本次使用的 `ui-ops-manual` 版次（目前為 `0.5.0`）、實際讀過的相對 reference 路徑與適用 schema 版次；依 [references/incremental-qa-workflow.md](references/incremental-qa-workflow.md) 維護唯一累積 finding ledger、資產凍結與失效依賴，並保留回歸與實際整改輪次。每次 review 都保留前一輪未解缺陷清單，將新 findings 合併追蹤，優先修正阻擋項並記錄修正證據；不影響主要流程的措辭精緻度、次要欄位深度或輕微美觀可附 reason／evidence 記為 accepted limitation，不反覆退回，不能只以最後一則訊息取代歷史缺陷。
+QA record 同時記錄本次使用的 `ui-ops-manual` 版次（目前基礎版次為 `0.5.1`；本機安裝若有 build suffix，以 plugin manifest 完整版本為準）、實際讀過的相對 reference 路徑與適用 schema 版次；依 [references/incremental-qa-workflow.md](references/incremental-qa-workflow.md) 維護唯一累積 finding ledger、案例矩陣、唯一 inventory、資產凍結／checkpoint 與失效依賴，並分開記錄各 QA phase 的 active／等待時間與返工原因。並行區段只計一次共享 wall time，不把等待重複加到工作時間；這些是觀測紀錄，不是硬性時間配額。每次 review 都保留前一輪未解缺陷清單，將新 findings 合併追蹤，優先修正阻擋項並記錄修正證據；不影響主要流程的措辭精緻度、次要欄位深度或輕微美觀可附 reason／evidence 記為 accepted limitation，不反覆退回，不能只以最後一則訊息取代歷史缺陷。
 
 ## 新任務第一輪回覆（強制）
 
@@ -105,11 +105,21 @@ QA record 同時記錄本次使用的 `ui-ops-manual` 版次（目前為 `0.5.0`
 
 不要採用任何特定專案的 release 工作流；這是通用技能。
 
+## 開工盤點與建置前唯一來源
+
+在第一張截圖前，先在同一份 QA record 建立範圍盤點／代表案例矩陣、建置前語意 inventory 與資產台帳三個相互連結的骨架；它們是工作唯一來源，不另造重複的審核關卡。矩陣與 inventory 可先有候選列和 `unknown` 狀態，隨實機取證回填 `captureState`／來源；呼叫 builder 前才完成必要的控制項類型、必填、值來源與作用條件核對。矩陣每列至少包含：`featureId`、主功能、主配置區、子配置區、會造成獨特操作的條件／狀態、最小代表案例、來源證據與狀態。由實機 UI 確認目前可見與可操作的內容；提供的前端原始碼只能協助找候選路由、元件與條件，本機程式碼不是部署事實，若與實機不一致就記為 `待確認`，不可自行推論。
+
+用矩陣選出能覆蓋每個獨特控制項、條件狀態、成功／失敗結果的最小案例集合。共用流程只在一個章節解說一次；其他配置用差異表說明實際不同的欄位、條件或結果，只有狀態、權限、資料或操作結果真的不同才新增主圖。資料筆數、頁數、圖片張數或「每種類型一張」都不是完成標準，也不是重複拍攝同一頁的理由。
+
+最小案例只能合併實機已證明相同的重複流程；選案前先從實機導覽、主配置頁與可到達的子 Tab／設定清單列出候選項目，再決定哪些流程共用。主要主／子配置區缺少畫面、控制項或操作證據就是缺件，不能自行標為 `accepted limitation`。
+
+在呼叫 builder 前，從已確認的實機與提供來源建立同一份欄位／控制項 inventory，後續覆蓋表、步驟、欄位表與 caption 都只引用它。每項至少記錄：控制項名稱、控制項類型、必填狀態、值來源、作用／顯示條件、操作結果、`captureState.id`／來源與信心狀態；控制項類型、必填、值來源或條件無法確認時明寫 `待確認`／`unknown`，不可用泛用模板補齊。建置後若 inventory 改變，只使其受影響章節、圖片與渲染／review 證據失效。
+
 ## 擷取與說明
 
-每個目標畫面建立一份覆蓋清單，再寫入文件。對每個互動元素記錄：名稱／icon、用途、觸發結果、顯示或可用條件、欄位定義、是否必填、格式與參數限制、錯誤或成功回饋。無法從 UI 或來源確認時標為「待確認」，不要捏造限制。
+每個目標功能依代表案例矩陣建立覆蓋清單，再寫入文件。對每個互動元素記錄：名稱／icon、控制項類型、用途、觸發結果、顯示或可用條件、欄位定義、是否必填、值來源、格式與參數限制、錯誤或成功回饋。共用步驟不要在每種配置重複撰寫；差異回指同一份 inventory 與差異表。無法從 UI 或來源確認時標為「待確認」，不要捏造限制。
 
-呼叫 builder 前，逐項以實際畫面的 `captureState.id` 和 manifest `source` 對照盤點可互動欄位、表頭、必填標記與可見選項。每欄用途要按畫面具體描述，不能用同一句泛用模板代替；未在證據中觀察到的欄位不得為湊完整度新增；必填狀態無法確認時寫「待確認」，不能預設為否。
+呼叫 builder 前，逐項以唯一 inventory、實際畫面的 `captureState.id` 和 manifest `source` 對照盤點可互動欄位、表頭、必填標記與可見選項。每個 `captureState` 都要核對當下實際可見視窗、載入完成／資料狀態與目標控制項；尚未開啟的表單不能標成表單，短暫的 loading 空清單也不能直接判為無資料。每欄用途要按畫面具體描述，不能用同一句泛用模板代替；未在證據中觀察到的欄位不得為湊完整度新增；必填狀態無法確認時寫「待確認」，不能預設為否。
 
 每個操作流程使用下列順序：
 
@@ -125,6 +135,8 @@ QA record 同時記錄本次使用的 `ui-ops-manual` 版次（目前為 `0.5.0`
 先依 [references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md) 判定來源與隱碼範圍，再取原始證據並產生 redacted／標註副本。操作截圖預設保留實際系統畫面；除非使用者明示，不得用重繪或生成 UI 取代它。身分 ID、地址、保單號、帳單號、合約號等識別資訊精準遮蔽，金額依預設保留。每個需互動的紅框應緊貼目標控制項，不遮蔽文字；圖說寫明紅框編號、控制項名稱與用途。若同一畫面有多個動作，拆成可讀的完整頁面操作圖，分別標示當步操作區；不得以局部裁切取代完整主圖。
 
 若 CUA screenshot 契約回傳 `Uint8Array`，可在同一 Node runtime 以 `fs/promises.writeFile` 保存到受限 QA 路徑後計算 hash；不可杜撰 API、把瀏覽器替代控制當成保存限制，或用生成 UI 取代實機來源。工具契約允許時，優先以該次 capture 的 DOM element／文字 `Range.getBoundingClientRect()` 取得實際 bbox；DOM 不可用時不可猜測座標，也不可跨圖沿用固定 y range。
+
+新 DOM 標註流程要在同一 `captureState` 保存 viewport／clip、PNG 實際尺寸、transform、capture id／raw hash 與 source bbox，呼叫既有 `transform_css_viewport_bbox` 產生候選框，並以 `--require-coordinate-provenance` 執行 manifest validator。這個 calibrated 機械結果不等於 visual pass；框線與隱碼仍維持 `pending`，直到 100% 直接檢視，且實際 bbox 不符重算結果時要先修正 mapping 或重新擷取，不能只改 status。無法證明 viewport／clip 映射、full-page 重排、舊 hash 或未知來源時停止並記錄 blocked，不猜 offset。
 
 對任何紅框或游標標註，先閱讀 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md)。以 manifest 管理每個控制項、redaction 和 caption；在 DOCX 建置前完成標註語意檢核。不要把 Word 的最終渲染當成紅框位置正確的證明。
 
@@ -159,7 +171,7 @@ QA record 同時記錄本次使用的 `ui-ops-manual` 版次（目前為 `0.5.0`
 
 ## 文件驗證與交付
 
-1. 先依 screenshot-completeness-workflow 的覆蓋表逐項比對已確認範圍、完整頁面主圖、必要操作／狀態與最終文件位置；每張圖片在 DOCX 建置前執行：`<bundled-python> "<skill>/scripts/validate_screenshot_manifest.py" --manifest "<qa>/one.json" --base-dir ".." --output "<qa>/one-manifest-validation.json"`。再檢查章節、圖說、紅框標註、每章編號重設、欄位表及更新紀錄。缺圖返回取證補齊，不以少量示例或 draft 當成完成。
+1. 先依 screenshot-completeness-workflow 的覆蓋表逐項比對已確認範圍、完整頁面主圖、必要操作／狀態與最終文件位置；每張新建或受影響圖片在 DOCX 建置前執行：`<bundled-python> "<skill>/scripts/validate_screenshot_manifest.py" --manifest "<qa>/one.json" --base-dir ".." --output "<qa>/one-manifest-validation.json"`。未變且 asset ledger 的 manifest／source hash／依賴可驗證時，可引用既有機械結果，但不能把它當成像素或語意 pass。含截圖的 build 後既有 audit 要以同一 QA record 的 `assetLedger` 凍結資料導出 `--image-evidence` 清單，並讀取報告的 `mechanical_status`／`image_evidence.status`；不能只看 audit exit code。再檢查章節、圖說、紅框標註、每章編號重設、欄位表及更新紀錄。缺圖返回取證補齊，不以少量示例或 draft 當成完成。
 2. 依 [references/screenshot-redaction-policy.md](references/screenshot-redaction-policy.md) 檢查來源分類、預設敏感值遮蔽、金額處理、redacted／annotated 圖片與媒體清理；原始圖與敏感原值不得進入交付品。validator 的 `geometry_status`／`manifest_status` 只代表 hash、尺寸、bbox 與明示狀態，不能代替逐張圖片檢視或 independent review。
 3. 檢查所有資料變更操作都有成功影響、鎖定條件、失敗／取消行為與操作後檢核。
 4. 依 [references/render-and-annotation-qa.md](references/render-and-annotation-qa.md)、[references/default-document-layout.md](references/default-document-layout.md) 與 [references/safe-word-render-policy.md](references/safe-word-render-policy.md) 使用固定的安全 Word 工作根目錄，先分類「Word 不可用」或「沙箱／路徑權限受限」，再決定重試、停止或經使用者確認的備援；含 CJK live text 時，CJK glyph 預檢必須先通過。
