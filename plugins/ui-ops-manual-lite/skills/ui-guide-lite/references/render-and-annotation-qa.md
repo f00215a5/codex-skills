@@ -46,6 +46,6 @@ macOS/Linux:
 "<venv>/bin/python" "<skill-path>/scripts/preview_docx.py" --docx "<deliverable>/manual.docx" --output-dir "<qa>/content-preview" --dpi 96
 ```
 
-此工具的 `render_visual.status` 固定是 `not_performed`；內容 preview 只表示嵌圖內容／封裝可讀，不是 Word renderer、分頁或字型 pass。
+此工具的 `render_visual.status` 固定是 `not_performed`；內容 preview 只表示嵌圖內容／封裝可讀，不是 Word renderer、分頁或字型 pass。DOM 標註另須通過 `--require-coordinate-provenance`；calibrated 只證明尺寸／clip provenance，不證明像素對位或隱碼語意。full-page、未知來源、舊 hash 或缺 transform 應維持 blocked。
 
 圖片、manifest、build manifest、需求 evidence 或 DOCX 任何一項變更後，重算受影響 hash、重建 output，重新讀回並讓獨立 reviewer 檢視；不能只替舊 review 換 hash。

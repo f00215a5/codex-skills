@@ -24,14 +24,22 @@ import posixpath
 import re
 import sys
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable, Mapping, Sequence
 from xml.etree import ElementTree as ET
 
 
 SCHEMA_VERSION = 1
+IMAGE_EVIDENCE_SCHEMA_VERSION = 1
 CHECK_NAMES = ("requirements", "redaction", "operation", "layout_structure")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+RAW_PATH_COMPONENTS = {
+    "raw",
+    "raw-capture",
+    "raw_capture",
+    "raw-original",
+    "raw_original",
+}
 
 
 class AuditInputError(Exception):
@@ -276,6 +284,50 @@ def _top_level_tables(root: ET.Element) -> tuple[list[ET.Element], bool]:
     return tables, wrapped
 
 
+def _cell_text(cell: ET.Element) -> str:
+    """Collect text only for the opt-in default-layout header gate."""
+
+    return "".join((node.text or "") for node in _descendants(cell, "t"))
+
+
+def _default_layout_table(root: ET.Element) -> ET.Element | None:
+    """Return the first update-record table, skipping one-cell wrappers only."""
+
+    body = _child(root, "body")
+    if body is None:
+        return None
+    table = next((child for child in list(body) if _local(child) == "tbl"), None)
+    while table is not None:
+        rows = _children(table, "tr")
+        cells = _children(rows[0], "tc") if rows else []
+        if len(cells) != 1:
+            return table
+        nested = [item for item in _descendants(cells[0], "tbl") if item is not table]
+        if not nested:
+            return table
+        table = nested[0]
+    return None
+
+
+def _default_layout_header_audit(root: ET.Element) -> tuple[str, list[str]]:
+    """Check only the default update-record header without returning text."""
+
+    table = _default_layout_table(root)
+    if table is None:
+        return "fail", ["update_record_table_missing"]
+    rows = _children(table, "tr")
+    if not rows:
+        return "fail", ["update_record_header_row_missing"]
+    cells = _children(rows[0], "tc")
+    if len(cells) != 3:
+        return "fail", ["update_record_header_columns_invalid"]
+    normalized = [re.sub(r"\s+", "", _cell_text(cell)) for cell in cells]
+    required = ("版本", "日期", "更新內容")
+    if any(token not in value for token, value in zip(required, normalized)):
+        return "fail", ["update_record_header_missing"]
+    return "pass", []
+
+
 def _relationship_source(path: str) -> str:
     marker = "/_rels/"
     if marker not in path or not path.endswith(".rels"):
@@ -325,6 +377,169 @@ def _package_media(package: zipfile.ZipFile, names: Sequence[str]) -> dict[str, 
         if name not in referenced:
             unreferenced.append(name)
     return {"status": "manual_review" if unreferenced else "pass", "media": media, "unreferenced_media": unreferenced}
+
+
+def _relative_image_path(value: Any) -> str | None:
+    """Return a safe normalized path relative to an image-evidence file."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip().replace("\\", "/")
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    if value.startswith("/") or posix.is_absolute() or windows.is_absolute() or windows.drive:
+        return None
+    if any(part in {"", ".."} for part in posix.parts):
+        return None
+    normalized = posix.as_posix()
+    return normalized if normalized not in {"", "."} else None
+
+
+def _resolve_image_asset(evidence_path: Path, relative_path: str) -> Path | None:
+    """Resolve an allowlisted image without traversal or symlink escape."""
+
+    try:
+        root = evidence_path.parent.resolve()
+        candidate = (root / Path(*PurePosixPath(relative_path).parts)).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _resolve_declared_image_input(evidence_path: Path, value: Any) -> Path | None:
+    """Find an existing declared asset for output-conflict protection only."""
+
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        candidate = Path(value.strip().replace("\\", os.sep))
+        if not candidate.is_absolute():
+            candidate = evidence_path.parent / candidate
+        candidate = candidate.resolve()
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _image_evidence_report(
+    evidence_path: Path,
+    media: Sequence[Mapping[str, Any]],
+    package_available: bool,
+) -> dict[str, Any]:
+    """Compare DOCX media bytes with a versioned post-freeze image allowlist."""
+
+    result: dict[str, Any] = {
+        "status": "blocked",
+        "manifest": {"filename": evidence_path.name},
+        "assets": [],
+        "reason_codes": [],
+    }
+    try:
+        result["manifest"]["sha256"] = _sha256_file(evidence_path)
+        with evidence_path.open("r", encoding="utf-8") as stream:
+            raw = json.load(stream)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        result["reason_codes"] = ["image_evidence_invalid"]
+        return result
+    if not isinstance(raw, Mapping):
+        result["reason_codes"] = ["image_evidence_invalid"]
+        return result
+
+    schema = raw.get("schema_version")
+    result["schema_version"] = schema
+    reasons: list[str] = []
+    if not isinstance(schema, int) or isinstance(schema, bool) or schema != IMAGE_EVIDENCE_SCHEMA_VERSION:
+        reasons.append("image_evidence_schema_invalid")
+
+    raw_assets = raw.get("assets")
+    if not isinstance(raw_assets, list):
+        reasons.append("image_evidence_assets_invalid")
+        raw_assets = []
+
+    allowed_hashes: set[str] = set()
+    seen_paths: set[str] = set()
+    for index, item in enumerate(raw_assets, start=1):
+        entry: dict[str, Any] = {"index": index, "status": "blocked"}
+        if not isinstance(item, Mapping):
+            entry["reason_code"] = "image_evidence_asset_invalid"
+            reasons.append("image_evidence_asset_invalid")
+            result["assets"].append(entry)
+            continue
+        relative_path = _relative_image_path(item.get("path"))
+        declared_hash = _hash(item.get("sha256"))
+        if relative_path is not None:
+            entry["path"] = relative_path
+        if declared_hash is not None:
+            entry["sha256"] = declared_hash
+        if relative_path is None:
+            entry["reason_code"] = "image_evidence_path_invalid"
+            reasons.append("image_evidence_path_invalid")
+            result["assets"].append(entry)
+            continue
+        if relative_path in seen_paths:
+            entry["reason_code"] = "image_evidence_path_duplicate"
+            reasons.append("image_evidence_path_duplicate")
+            result["assets"].append(entry)
+            continue
+        seen_paths.add(relative_path)
+        components = {part.casefold() for part in PurePosixPath(relative_path).parts}
+        if components & RAW_PATH_COMPONENTS:
+            entry["reason_code"] = "image_evidence_raw_path_forbidden"
+            reasons.append("image_evidence_raw_path_forbidden")
+            result["assets"].append(entry)
+            continue
+        if declared_hash is None:
+            entry["reason_code"] = "image_evidence_hash_invalid"
+            reasons.append("image_evidence_hash_invalid")
+            result["assets"].append(entry)
+            continue
+
+        asset_path = _resolve_image_asset(evidence_path, relative_path)
+        if asset_path is None:
+            entry["reason_code"] = "image_evidence_asset_missing"
+            reasons.append("image_evidence_asset_missing")
+            result["assets"].append(entry)
+            continue
+        try:
+            actual_hash = _sha256_file(asset_path)
+        except OSError:
+            actual_hash = None
+        if actual_hash != declared_hash:
+            entry["reason_code"] = "image_evidence_asset_hash_mismatch"
+            reasons.append("image_evidence_asset_hash_mismatch")
+        else:
+            entry["status"] = "pass"
+            allowed_hashes.add(declared_hash)
+        result["assets"].append(entry)
+
+    if not reasons and package_available:
+        embedded_hashes = {item.get("sha256") for item in media if item.get("sha256")}
+        unmatched = sorted(embedded_hashes - allowed_hashes)
+        result["embedded_media"] = {"count": len(embedded_hashes), "unmatched_count": len(unmatched)}
+        if unmatched:
+            reasons.append("image_evidence_embedded_media_not_allowlisted")
+    elif not package_available:
+        reasons.append("image_evidence_docx_media_unavailable")
+
+    result["reason_codes"] = sorted(set(reasons))
+    if reasons:
+        result["status"] = "blocked" if any(
+            code in {
+                "image_evidence_invalid",
+                "image_evidence_schema_invalid",
+                "image_evidence_assets_invalid",
+                "image_evidence_asset_invalid",
+                "image_evidence_path_invalid",
+                "image_evidence_hash_invalid",
+                "image_evidence_asset_missing",
+                "image_evidence_docx_media_unavailable",
+            }
+            for code in reasons
+        ) else "fail"
+    else:
+        result["status"] = "pass"
+    return result
 
 
 def _read_json(path: Path | None) -> tuple[Any, str | None]:
@@ -953,6 +1168,8 @@ def audit_docx(
     docx_path: str | Path,
     review_path: str | Path | None = None,
     manifest_path: str | Path | None = None,
+    require_default_layout: bool = False,
+    image_evidence_path: str | Path | None = None,
 ) -> dict[str, Any]:
     docx = Path(docx_path).expanduser().resolve()
     review = Path(review_path).expanduser().resolve() if review_path is not None else None
@@ -979,11 +1196,16 @@ def audit_docx(
             "operation_semantics_not_proven_by_structure",
         ],
     }
+    if require_default_layout:
+        report["limitations"].remove("document_text_not_inspected")
+        report["limitations"].append("document_text_only_checked_for_default_update_header_tokens")
     mechanical_status = "failed" if docx_sha is None else "pass"
     findings: list[dict[str, Any]] = []
     media_hashes: set[str] = set()
+    package_available = False
     try:
         with zipfile.ZipFile(docx, "r") as package:
+            package_available = True
             names = [info.filename for info in package.infolist() if not info.is_dir()]
             media = _package_media(package, names)
             report["package"] = media
@@ -1012,6 +1234,13 @@ def audit_docx(
             if not tables:
                 findings.append({"code": "top_level_table_missing"})
                 mechanical_status = _combine([mechanical_status, "manual_review"])
+            if require_default_layout:
+                layout_status, layout_findings = _default_layout_header_audit(document_root)
+                report["default_layout"] = {"status": layout_status}
+                for code in layout_findings:
+                    findings.append({"code": code})
+                if layout_status == "fail":
+                    mechanical_status = _combine([mechanical_status, "failed"])
             for index, table in enumerate(tables, start=1):
                 alignment = _alignment(table, styles)
                 width = _table_width(table)
@@ -1030,6 +1259,23 @@ def audit_docx(
         findings.append({"code": "docx_package_unreadable"})
         mechanical_status = "failed"
 
+    if image_evidence_path is not None:
+        evidence_path = Path(image_evidence_path).expanduser().resolve()
+        image_evidence = _image_evidence_report(
+            evidence_path,
+            report["package"].get("media", []),
+            package_available,
+        )
+        report["image_evidence"] = image_evidence
+        if image_evidence["status"] == "fail":
+            mechanical_status = _combine([mechanical_status, "failed"])
+            findings.append({"code": "image_evidence_failed"})
+        elif image_evidence["status"] == "blocked":
+            mechanical_status = _combine([mechanical_status, "manual_review"])
+            findings.append({"code": "image_evidence_blocked"})
+        for reason_code in image_evidence.get("reason_codes", []):
+            findings.append({"code": reason_code})
+
     report["mechanical_status"] = "failed" if mechanical_status in {"fail", "failed"} else mechanical_status
     report["findings"] = findings
     review_value, review_error = _read_json(review)
@@ -1044,18 +1290,67 @@ def _resolved(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
 
 
+def _manifest_image_inputs(manifest_path: Path) -> list[Path]:
+    """Resolve image refs in a build manifest for output-conflict protection."""
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, Mapping):
+        return []
+    base_value = payload.get("baseDir")
+    base = Path(base_value) if isinstance(base_value, str) and base_value.strip() else manifest_path.parent
+    if not base.is_absolute():
+        base = manifest_path.parent / base
+    try:
+        base = base.expanduser().resolve()
+    except OSError:
+        base = manifest_path.parent
+    chapters = payload.get("chapters")
+    if chapters is None:
+        chapter = payload.get("chapter")
+        chapters = [chapter] if isinstance(chapter, Mapping) else []
+    if not isinstance(chapters, list):
+        return []
+    refs: list[Path] = []
+    for chapter in chapters:
+        if not isinstance(chapter, Mapping):
+            continue
+        blocks: list[Any] = [chapter.get("entry")]
+        blocks.extend(
+            step
+            for section in chapter.get("sections", [])
+            if isinstance(section, Mapping)
+            for step in section.get("steps", [])
+        )
+        for block in blocks:
+            if not isinstance(block, Mapping) or not isinstance(block.get("image"), str):
+                continue
+            try:
+                refs.append((base / Path(block["image"])).expanduser().resolve())
+            except (OSError, TypeError, ValueError):
+                # Keep a best-effort path so an output cannot replace a
+                # declared asset merely because path normalization failed.
+                refs.append(base / Path(str(block["image"]).replace("\\", os.sep)))
+    return refs
+
+
 def _output_conflicts(
     output: str,
     docx: str | Path,
     review: str | Path | None,
     manifest: str | Path | None = None,
+    image_evidence: str | Path | None = None,
 ) -> bool:
     if output == "-":
         return False
     destination = _resolved(output)
     inputs = [_resolved(docx)]
     if manifest is not None:
-        inputs.append(_resolved(manifest))
+        manifest_input = _resolved(manifest)
+        inputs.append(manifest_input)
+        inputs.extend(_manifest_image_inputs(manifest_input))
     review_input: Path | None = None
     if review is not None:
         review_input = _resolved(review)
@@ -1072,6 +1367,28 @@ def _output_conflicts(
                     inputs.append(evidence.resolve())
                 except OSError:
                     continue
+    if image_evidence is not None:
+        image_evidence_input = _resolved(image_evidence)
+        inputs.append(image_evidence_input)
+        try:
+            with image_evidence_input.open("r", encoding="utf-8") as stream:
+                image_value = json.load(stream)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            image_value = None
+        if isinstance(image_value, Mapping) and isinstance(image_value.get("assets"), list):
+            for item in image_value["assets"]:
+                if not isinstance(item, Mapping):
+                    continue
+                relative_path = _relative_image_path(item.get("path"))
+                asset_path = (
+                    _resolve_image_asset(image_evidence_input, relative_path)
+                    if relative_path is not None
+                    else None
+                )
+                if asset_path is None:
+                    asset_path = _resolve_declared_image_input(image_evidence_input, item.get("path"))
+                if asset_path is not None:
+                    inputs.append(asset_path)
     return any(os.path.normcase(destination) == os.path.normcase(path) for path in inputs)
 
 
@@ -1081,14 +1398,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, help="JSON output path, or - for stdout")
     parser.add_argument("--review", help="Optional independent lite review JSON path")
     parser.add_argument("--manifest", help="Optional final build manifest path to bind in the review")
+    parser.add_argument(
+        "--image-evidence",
+        help="Optional frozen JSON allowlist of delivered image paths and SHA-256 hashes",
+    )
+    parser.add_argument(
+        "--require-default-layout",
+        action="store_true",
+        help="Require the first default-layout update-record table header",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if _output_conflicts(args.output, args.docx, args.review, args.manifest):
+    if _output_conflicts(args.output, args.docx, args.review, args.manifest, args.image_evidence):
         return 2
-    report = audit_docx(args.docx, args.review, args.manifest)
+    report = audit_docx(
+        args.docx,
+        args.review,
+        args.manifest,
+        args.require_default_layout,
+        args.image_evidence,
+    )
     payload = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output == "-":
         sys.stdout.write(payload)

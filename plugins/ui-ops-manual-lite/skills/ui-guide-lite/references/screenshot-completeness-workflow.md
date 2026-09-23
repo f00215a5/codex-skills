@@ -6,13 +6,13 @@
 
 先選一張包含實際操作目標、頁面上下文和需隱碼資料的代表性頁面，完成 raw、redacted、annotated、整合 screenshot manifest、`redact.py`／`annotate.py`／`validate_screenshot_manifest.py` 圖片檢查、暫存 DOCX build 與輸出讀回。讀回只驗證內容／封裝／結構範圍；lite 沒有 DOCX renderer，不把 preview 或 exit code 說成 Word 分頁或字型通過。端到端流程未跑通前先修正，不能先大量產生缺圖文件。
 
-每張圖都重新保存 `captureState.id`、source SHA-256、原始尺寸、viewport／scroll／full-page 校準和各自 bbox。不要把代表圖或前一個狀態的座標、列距或固定 y 套到下一張圖。
+每張圖都重新保存 `captureState.id`、source SHA-256、原始尺寸、viewport／scroll 校準和各自 bbox。不要把代表圖或前一個狀態的座標、列距或固定 y 套到下一張圖。
 
 ## 完整頁面主圖
 
 - 主圖預設是整個應用程式頁面，保留頁首／標題、導覽或側邊欄、主要內容及操作區的相對位置。瀏覽器網址列和作業系統桌面不是必要內容。
-- 短頁使用完整 viewport。長頁使用工具支援的 full-page，或使用有順序、scroll offset、重疊區域及每張個別 manifest 的 `viewport-sequence`。內部捲動面板要確認沒有漏段、重複、錯位或浮層覆蓋。
-- full-page 可能重排、改變 lazy content 或讓固定頁首覆蓋內容。每張 raw 拍完後以實際輸出尺寸和已知控制項重新校準；不能用 `pngHeight / viewportHeight` 當全頁倍率，也不能把拍攝前 DOM 座標直接當成 PNG 座標。校準依據要寫進該張 manifest／QA record。
+- 新 DOM 取證的短頁使用完整 viewport，並可用單張 `viewport-sequence`；長頁使用有順序、scroll offset、重疊區域及每張個別 manifest 的 `viewport-sequence`。內部捲動面板要確認沒有漏段、重複、錯位或浮層覆蓋。`full-page` 不適用於新 DOM strict gate。
+- `viewport-sequence` 可能受捲動、lazy content 或固定頁首影響。每張 raw 拍完後以實際輸出尺寸和已知控制項重新校準；不能用 `pngWidth / viewportWidth` 或 `pngHeight / viewportHeight` 當全局倍率，也不能把拍攝前 DOM 座標直接當成另一張 PNG 座標。校準依據要寫進該張 manifest／QA record。
 - 彈窗保留其所在頁面背景和完整彈窗；內容過長時依連續 viewport 規則補齊。欄位、按鈕、錯誤訊息的 detail 圖只能補充，不能取代主圖。
 - 使用者未明示時保留實際系統截圖，不生成或重繪 UI。取得不到適用實圖時標為待補證據／draft，列明缺件；不得以示意圖冒稱 screenshot。
 
@@ -25,7 +25,7 @@
 | 失敗點 | 處理 |
 | --- | --- |
 | 截圖未落地或檔案不可讀 | 先讀當前 CUA/browser capability；若 API 實際回傳 bytes 且同一 runtime 允許 Node `fs.writeFile`，直接保存後再 canonicalize、重算 hash。沒有 fs 或 bytes 型別不符時，記錄具體 runtime／API／型別錯誤並待補；不走 clipboard→PowerShell 或 `CopyFromScreen`，native capture disabled 也不換另一套 native capture。 |
-| full-page 座標錯位 | 以該張 raw 實際尺寸、scroll 定義及校準 controls 重新測量，不能套用固定比例。 |
+| viewport-sequence 座標錯位 | 以該張 raw 實際尺寸、scroll 定義及校準 controls 重新測量，不能套用固定比例；既有 full-page 圖片不能送新 DOM strict gate。 |
 | 敏感值過多或遮蔽影響閱讀 | 精準遮蔽值，保留 labels、controls 和金額；可改用已授權的測試資料，但不能改成空白／無結果狀態冒充成功。 |
 | 嵌入／讀回不一致 | 回到已通過的圖片與 build manifest 查依賴，重建受影響 output 並重算 hash。 |
 

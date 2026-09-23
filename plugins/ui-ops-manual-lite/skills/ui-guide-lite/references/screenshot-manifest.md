@@ -19,20 +19,30 @@
   "annotatedSha256": "<annotated-png-sha256>",
   "annotationProvenance": "qa/create-task-annotation.json",
   "sourceKind": "captured",
-  "captureKind": "full-page",
+  "captureKind": "viewport-sequence",
   "captureState": {
     "id": "create-task-filter-open-01",
     "rawSha256": "<same-canonical-raw-png-sha256>",
     "viewportCssSize": {"width": 1536, "height": 864},
-    "scroll": {"x": 0, "y": 640},
+    "scroll": {"x": 0, "y": 0},
+    "coordinateTransform": {
+      "status": "calibrated",
+      "sourceSpace": "css-viewport",
+      "targetSpace": "png-pixels",
+      "viewportSize": {"width": 1536, "height": 864},
+      "clip": {"x": 0, "y": 0, "width": 1536, "height": 864},
+      "screenshotSize": {"width": 1536, "height": 864},
+      "scrollOffset": {"x": 0, "y": 0},
+      "devicePixelRatio": 1
+    },
     "calibration": {
       "mode": "known-control",
-      "pngSize": {"width": 1920, "height": 2160},
+      "pngSize": {"width": 1536, "height": 864},
       "viewportCssSize": {"width": 1536, "height": 864},
       "knownControl": {"name": "儲存", "bbox": {"x": 1050, "y": 670, "width": 92, "height": 40}}
     }
   },
-  "originalImageSize": {"width": 1920, "height": 2160},
+  "originalImageSize": {"width": 1536, "height": 864},
   "protectedAreas": [
     {"name": "儲存 button label", "bbox": {"x": 1038, "y": 660, "width": 120, "height": 60}}
   ],
@@ -50,7 +60,12 @@
       "controlName": "儲存",
       "caption": "紅框 1：儲存按鈕。",
       "bbox": {"x": 1050, "y": 670, "width": 92, "height": 40},
-      "provenance": "dom-derived",
+      "source": "dom",
+      "coordinateProvenance": {
+        "captureStateId": "create-task-filter-open-01",
+        "sourceSha256": "<same-canonical-raw-png-sha256>",
+        "sourceBbox": {"x": 1050, "y": 670, "width": 92, "height": 40}
+      },
       "badgePosition": {"anchor": "top-left", "offset": {"x": 0, "y": 0}},
       "status": "pending"
     }
@@ -59,7 +74,7 @@
 }
 ```
 
-`sourceKind` 使用 `captured`、`provided`、`reused` 或使用者明示並批准的 `schematic`；`captureKind` 使用 `full-page`、`viewport-sequence` 或 `detail`。`detail` 必須以 `detailOf`／`mainImage` 回指同一狀態的完整主圖。每個 manifest 必須有 `redactions` 和 `annotations` 陣列；沒有敏感資料時使用空 `redactions` 並加不含原值的 `noSensitiveDataReason`。`reviewStatus`、redaction status 和 annotation status 在 builder／reviewer 直接看圖後才能由 pending 改為 checked／verified；任何 pending／blocked 都不能產生正式 pass。
+`sourceKind` 使用 `captured`、`provided`、`reused` 或使用者明示並批准的 `schematic`；新 DOM 的 `captureKind` 使用 `viewport-sequence` 或 `detail`，既有／provided 圖片才可保留 `full-page` 作相容資料。`detail` 必須以 `detailOf`／`mainImage` 回指同一狀態的完整主圖。每個 manifest 必須有 `redactions` 和 `annotations` 陣列；沒有敏感資料時使用空 `redactions` 並加不含原值的 `noSensitiveDataReason`。`reviewStatus`、redaction status 和 annotation status 在 builder／reviewer 直接看圖後才能由 pending 改為 checked／verified；任何 pending／blocked 都不能產生正式 pass。
 
 `protectedAreas` 只放不可被遮住的 label、欄名、button 或其他定位區，不可把包含敏感值的整個 input／列列為 protected。redaction bbox 不得和 protected area 正面積重疊。manifest、caption、檔名和報告只保留類別、座標、狀態、capture id 和 hash，不寫敏感原值或可反推出原值的文字。
 
@@ -69,14 +84,14 @@
 
 ```text
 Windows PowerShell:
-& "<venv>\Scripts\python.exe" "<skill-path>\scripts\capture.py" canonicalize --input "<capture>" --raw-output "<qa>\raw\create-task.capture" --canonical-output "<qa>\raw\create-task.png" --provenance-output "<qa>\create-task-capture.json" --capture-id "create-task-filter-open-01" --capture-kind "full-page" --viewport-width 1536 --viewport-height 864 --scroll-x 0 --scroll-y 640 --capture-state "<qa>\capture-state.json"
+& "<venv>\Scripts\python.exe" "<skill-path>\scripts\capture.py" canonicalize --input "<capture>" --raw-output "<qa>\raw\create-task.capture" --canonical-output "<qa>\raw\create-task.png" --provenance-output "<qa>\create-task-capture.json" --capture-id "create-task-filter-open-01" --capture-kind "viewport-sequence" --viewport-width 1536 --viewport-height 864 --scroll-x 0 --scroll-y 0 --capture-state "<qa>\capture-state.json"
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\redact.py" draw --image "<raw.png>" --manifest "<screenshot.json>" --output "<redacted.png>" --provenance-output "<provenance.json>"
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\redact.py" check --image "<raw.png>" --redacted "<redacted.png>" --manifest "<screenshot.json>" --provenance "<provenance.json>" --require-checked
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\annotate.py" check --image "<redacted.png>" --annotations "<screenshot.json>"
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\annotate.py" draw --image "<redacted.png>" --annotations "<screenshot.json>" --output "<annotated.png>" --provenance-output "<annotation-provenance.json>"
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\annotate.py" check --image "<redacted.png>" --annotations "<screenshot.json>" --require-approved
 macOS/Linux:
-"<venv>/bin/python" "<skill-path>/scripts/capture.py" canonicalize --input "<capture>" --raw-output "<qa>/raw/create-task.capture" --canonical-output "<qa>/raw/create-task.png" --provenance-output "<qa>/create-task-capture.json" --capture-id "create-task-filter-open-01" --capture-kind "full-page" --viewport-width 1536 --viewport-height 864 --scroll-x 0 --scroll-y 640 --capture-state "<qa>/capture-state.json"
+"<venv>/bin/python" "<skill-path>/scripts/capture.py" canonicalize --input "<capture>" --raw-output "<qa>/raw/create-task.capture" --canonical-output "<qa>/raw/create-task.png" --provenance-output "<qa>/create-task-capture.json" --capture-id "create-task-filter-open-01" --capture-kind "viewport-sequence" --viewport-width 1536 --viewport-height 864 --scroll-x 0 --scroll-y 0 --capture-state "<qa>/capture-state.json"
 "<venv>/bin/python" "<skill-path>/scripts/redact.py" draw --image "<raw.png>" --manifest "<screenshot.json>" --output "<redacted.png>" --provenance-output "<provenance.json>"
 "<venv>/bin/python" "<skill-path>/scripts/redact.py" check --image "<raw.png>" --redacted "<redacted.png>" --manifest "<screenshot.json>" --provenance "<provenance.json>" --require-checked
 "<venv>/bin/python" "<skill-path>/scripts/annotate.py" check --image "<redacted.png>" --annotations "<screenshot.json>"
@@ -88,9 +103,38 @@ redaction adapter 以 `sourceImage`／`sourceSha256`／`redactions`／`protected
 
 ## 擷取、格式與座標綁定
 
-每次重新擷取都建立新的 `captureState.id`、重新計算 raw hash，重新測量該張圖的 redaction／annotation bbox。即使尺寸相同，只要 raw hash 不同，也要重新看圖和測量。工具契約允許時，優先用當次 DOM 的 `getBoundingClientRect()` 或文字 `Range.getBoundingClientRect()` 取得數值 bbox；先確認 device pixel ratio、scrollbar、full-page 重排、fixed header 和 scroll 定義，再逐張校準。不能以 `pngWidth / viewportWidth` 或 `pngHeight / viewportHeight` 全局套用，更不能用全頁高度除以 viewport 高度當倍率。full-page calibration 必須提供 per-image 的 known control／explicit scale evidence；舊的 `pngHeight/viewportHeight` 值不能獨自當 DPR。
+每次重新擷取都建立新的 `captureState.id`、重新計算 raw hash，重新測量該張圖的 redaction／annotation bbox。即使尺寸相同，只要 raw hash 不同，也要重新看圖和測量。工具契約允許時，優先用當次 DOM 的 `getBoundingClientRect()` 或文字 `Range.getBoundingClientRect()` 取得數值 bbox；先確認 device pixel ratio、scrollbar、viewport-sequence 的 scroll 定義、fixed header 和 scroll 定義，再逐張校準。不能以 `pngWidth / viewportWidth` 或 `pngHeight / viewportHeight` 全局套用，更不能用全頁高度除以 viewport 高度當倍率。新 DOM strict gate 不接受 `full-page`；既有／provided full-page 只能作相容資料，不能作為新 DOM 座標證據。
 
-若 full-page 回傳 JPEG bytes，即使檔名是 `.png`，先保存未修改的原始 bytes、實際 MIME 和原始 hash；對副本解碼後以相同尺寸／像素資料寫 canonical PNG，不 resize、crop 或重新壓縮。解碼 canonical PNG 後逐像素比對，才可記錄 `captureProvenance.pixelEquality: "verified"`；原始捕獲檔只留在受限 QA 區。`capture.py canonicalize` 會先檢查所有輸入／輸出別名、既有 immutable paths、影像格式及 capture metadata，再一次產出 raw、canonical PNG 和 provenance，參數不合法時不留下半套輸出。
+對 DOM 標註，`captureState.coordinateTransform` 必須保存可驗證的 viewport → PNG 映射：`status: "calibrated"`、`sourceSpace: "css-viewport"`、`targetSpace: "png-pixels"`、`viewportSize`、`clip`、實際 `screenshotSize`、`scrollOffset` 和正數 `devicePixelRatio`；可選 `scale` 必須等於 `screenshotSize / clip`。annotation 使用 `source: "dom"` 或 `"dom-manual-adjusted"`，並在 `coordinateProvenance` 保存 `captureStateId`、同一 raw `sourceSha256`、DOM `sourceBbox`；人工調整另保存 `adjustmentReason` 和轉換後的 `transformedBbox`。manifest 保留浮點 bbox，繪圖工具的像素取整只是 rasterization 細節，不可用取整結果掩蓋未證明的映射。
+
+下列是可直接在 lite skill 的 scripts 目錄執行的最小換算範例；viewport、clip、screenshot 和 scroll 都是帶有 `width`／`height` 或 `x`／`y` 的物件，不可改成陣列：
+
+```python
+from validate_screenshot_manifest import transform_css_viewport_bbox
+
+transform = {
+    "status": "calibrated",
+    "sourceSpace": "css-viewport",
+    "targetSpace": "png-pixels",
+    "viewportSize": {"width": 1536, "height": 674},
+    "clip": {"x": 0, "y": 0, "width": 1536, "height": 674},
+    "screenshotSize": {"width": 1521, "height": 667},
+    "scrollOffset": {"x": 0, "y": 0},
+    "devicePixelRatio": 1.25,
+}
+candidate = transform_css_viewport_bbox(
+    {"x": 591.7000122070312, "y": 196.8000030517578,
+     "width": 68.63750457763672, "height": 28},
+    transform,
+)
+# candidate["bbox"] ≈ {"x": 585.921692, "y": 194.756086, ...}
+```
+
+把 `candidate["bbox"]` 回填到同一張 annotated manifest 前仍要保存 `captureState.id`、raw hash 和 `coordinateProvenance`；helper 的 `devicePixelRatioApplied: false` 表示 DPR 已只作來源紀錄，不能再乘一次。
+
+新 DOM 標註流程必須在同一 validator 命令追加 `--require-coordinate-provenance`。它只檢查 hash、capture state、尺寸、clip 和浮點座標換算，`coordinate_provenance.status: "pass"` 仍不代表圖片已對位或隱碼語意通過；模型／reviewer 必須再以 100% 直接看圖。缺 transform、full-page／sticky 的未知映射、來源 hash 不符或人工 bbox 與重算結果不符時，保持 `blocked`，不能只修改 status。
+
+若處理既有／provided full-page 圖片而回傳 JPEG bytes，即使檔名是 `.png`，先保存未修改的原始 bytes、實際 MIME 和原始 hash；對副本解碼後以相同尺寸／像素資料寫 canonical PNG，不 resize、crop 或重新壓縮。解碼 canonical PNG 後逐像素比對，才可記錄 `captureProvenance.pixelEquality: "verified"`；原始捕獲檔只留在受限 QA 區。`capture.py canonicalize` 會先檢查所有輸入／輸出別名、既有 immutable paths、影像格式及 capture metadata，再一次產出 raw、canonical PNG 和 provenance，參數不合法時不留下半套輸出。
 
 若截圖契約回傳 `Uint8Array`／明確允許的 Node `Buffer`，先依當前 CUA/browser API 的實際能力選擇保存分支；若同一 runtime 允許 `node:fs/promises`，在已綁定的 Tab 上直接以 `tab.getScreenshot({emit: false})` 取得 bytes，再用 `fs.writeFile` 保存到受限 QA 路徑，對落地 bytes 計 hash，最後才交給 `capture.py canonicalize`。下例的 `confirmedQaDirectory` 是 placeholder，執行前替換成已確認可寫入的絕對 QA 目錄；不要改成相對路徑。例如：
 
@@ -104,7 +148,7 @@ await mkdir(confirmedQaDirectory, {recursive: true});
 await writeFile(join(confirmedQaDirectory, "create-task.capture"), bytes, {flag: "wx"});
 ```
 
-這不是自行發明 CUA API，也不能因 DOM 不可用而猜測座標。若 runtime 沒有 Node fs／`writeFile`，或 API 回傳型別不符，記錄 runtime、API、型別和保存路徑的具體錯誤並標為待補，不一律宣稱無法落地；不要繞 browser clipboard→PowerShell 或 `CopyFromScreen`，native capture disabled 時也不要改試另一套 native capture。`fullPage` 只有 browser 文件明示支援時才傳，否則使用實際支援的 viewport／sequence。
+這不是自行發明 CUA API，也不能因 DOM 不可用而猜測座標。若 runtime 沒有 Node fs／`writeFile`，或 API 回傳型別不符，記錄 runtime、API、型別和保存路徑的具體錯誤並標為待補，不一律宣稱無法落地；不要繞 browser clipboard→PowerShell 或 `CopyFromScreen`，native capture disabled 時也不要改試另一套 native capture。新 DOM 流程不傳 `fullPage`；只有處理既有／provided full-page 圖片且 browser 文件明示支援時才保留該參數，否則使用實際支援的 viewport／sequence。
 
 ## 唯讀驗證與邊界
 
@@ -115,10 +159,14 @@ per-image validator 對同一份整合 manifest 檢查 source raw／redacted／a
 ```text
 Windows PowerShell:
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\validate_screenshot_manifest.py" --manifest "<qa>\create-task.json" --output "<qa>\create-task-manifest-validation.json"
+& "<venv>\Scripts\python.exe" "<skill-path>\scripts\validate_screenshot_manifest.py" --manifest "<qa>\create-task.json" --output "<qa>\create-task-coordinate-validation.json" --require-coordinate-provenance
 macOS/Linux:
 "<venv>/bin/python" "<skill-path>/scripts/validate_screenshot_manifest.py" --manifest "<qa>/create-task.json" --output "<qa>/create-task-manifest-validation.json"
+"<venv>/bin/python" "<skill-path>/scripts/validate_screenshot_manifest.py" --manifest "<qa>/create-task.json" --output "<qa>/create-task-coordinate-validation.json" --require-coordinate-provenance
 ```
 
 `--output` 必須是新檔，不能覆寫整合 manifest 或三張輸入圖片；exit 0 只表示 `manifest_status: "pass"` 的報告成功寫出，exit 1 仍要讀取已寫出的 `blocked`／`fail` 報告。
+
+新 DOM 流程必須讀取 `coordinate_provenance.status` 和 `manifest_status`；舊 manifest 不帶此 flag 時維持相容，但不能當成新 DOM 座標證據。這個機械 gate 不讀像素、不做 OCR，也不取代 redacted／annotated 圖片的直接檢視。
 
 `redact.py`／`annotate.py`／validator 的機械結果不能證明已找出所有敏感值、紅框貼合 control、操作語意或內容可讀。builder 必須逐張直接看 raw／redacted／annotated，最終 reviewer 另依 [independent-delivery-review.md](independent-delivery-review.md) 審核；圖片或 manifest 改變後重算受影響 hash、重建 output 和 review。
