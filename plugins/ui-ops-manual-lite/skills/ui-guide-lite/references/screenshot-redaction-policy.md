@@ -41,7 +41,7 @@ manifest 只記錄類別、座標、方法、狀態與檔案雜湊，不記錄�
 1. 建立整合 screenshot manifest，至少包含 `schema_version`、`sourceKind`、`captureKind`、`sourceImage`、`sourceSha256`、`captureState`、`originalImageSize`、`redactedImage`、`annotatedImage`、`protectedAreas`、`redactions`、`annotations` 和 `reviewStatus`。每筆 `redactions` 包含 `category`、`bbox`、`method` 和 `status`；`method` 使用 `opaque-rectangle` 或 `pixelate`，`status` 初始可為 `pending`。同一張圖的 annotation 直接放在這份 manifest，不另造第三套來源。
 2. 以 `redact.py draw` 產生扁平化 PNG；輸出不得覆寫 raw 或 manifest，可另寫 `--provenance-output`。provenance 保存 `sourceSha256`、`redactedSha256`、來源分類與安全的遮蔽清單。
 3. 先用 `redact.py check --image <raw> --redacted <redacted> --manifest <screenshot.json> --provenance <provenance.json>` 檢查來源 hash、尺寸、PNG 格式、capture state、protected area 和座標邊界；此時允許 pending，不預填 checked。
-4. 由能直接檢視圖片的獨立 reviewer 以 100% 檢視 raw／redacted 對照，確認識別資料真的不可讀、遮蔽範圍沒有漏掉或誤遮操作資訊，才更新為 checked，再執行同一 check 命令並加上 `--require-checked`。狀態更新不可改寫既有來源／圖片 hash；若同時更動座標或圖片，先重新產圖並核對。
+4. builder 先以 100% 直接檢視 raw／redacted 對照，自查識別資料真的不可讀、遮蔽範圍沒有漏掉或誤遮操作資訊，確認後更新為 checked，再執行同一 check 命令並加上 `--require-checked` 以繼續 draft／建置；這個 checked 只是 builder 自查，不能當成獨立 pass。最終交付仍須由能直接檢視圖片、且不同於 builder 的獨立 reviewer 重新檢視並完成 review。狀態更新不可改寫既有來源／圖片 hash；若同時更動座標或圖片，先重新產圖並核對。
 5. 只以 redacted PNG 進入標註和 DOCX；raw、未扁平化原圖與包含敏感值的中間檔不得進入 DOCX 或交付資料夾。reviewer 可在受限 QA 工作區讀取原始證據作對照；審核紀錄只保存不含敏感值的定位與 hash，不內嵌或複製原圖。
 
 `redact.py` 的矩形與 hash 檢查只證明列出的座標和檔案相符，不能證明敏感資料清單完整，也不能證明像素化結果在語意上足夠。若環境或 reviewer 無法看圖，`redaction` 與相關 `operation` review 必須保持 `blocked`；可繼續不依賴圖片審核的已授權工作，產物標為 draft。

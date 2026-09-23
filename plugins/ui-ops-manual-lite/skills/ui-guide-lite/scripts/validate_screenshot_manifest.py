@@ -71,6 +71,42 @@ PENDING_CODES = {
     "approval_blocked",
     "approval_status_missing",
 }
+COORDINATE_BLOCKED_CODES = {
+    "coordinate_capture_kind_unsupported",
+    "coordinate_capture_state_mismatch",
+    "coordinate_provenance_missing",
+    "coordinate_source_unsupported",
+    "coordinate_source_sha256_invalid",
+    "coordinate_source_sha256_mismatch",
+    "coordinate_transform_missing",
+    "coordinate_transform_invalid",
+    "coordinate_viewport_invalid",
+    "coordinate_clip_invalid",
+    "coordinate_screenshot_size_invalid",
+    "coordinate_scroll_offset_invalid",
+    "coordinate_dpr_invalid",
+    "coordinate_clip_out_of_viewport",
+    "coordinate_scale_invalid",
+    "coordinate_scale_mismatch",
+    "coordinate_screenshot_size_mismatch",
+    "coordinate_adjustment_reason_missing",
+    "coordinate_transformed_bbox_missing",
+    "coordinate_transformed_bbox_mismatch",
+    "coordinate_manual_adjustment_pending",
+    "coordinate_source_bbox_invalid",
+    "coordinate_source_bbox_out_of_clip",
+    "coordinate_output_bbox_out_of_bounds",
+    "coordinate_bbox_mismatch",
+}
+DOM_ANNOTATION_SOURCES = {"dom", "dom-manual-adjusted"}
+
+
+class CoordinateTransformError(ValueError):
+    """A coordinate transform cannot be proven from manifest metadata."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 def _finding(code: str, *, role: str | None = None, index: int | None = None) -> dict[str, Any]:
@@ -105,6 +141,188 @@ def _status(value: Any, allowed: set[str]) -> str | None:
         return None
     normalized = value.strip().casefold()
     return normalized if normalized in allowed else None
+
+
+def _coordinate_dimensions(value: Any, code: str) -> tuple[float, float]:
+    if not isinstance(value, Mapping):
+        raise CoordinateTransformError(code)
+    values = [value.get("width"), value.get("height")]
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in values):
+        raise CoordinateTransformError(code)
+    width, height = (float(item) for item in values)
+    if not all(math.isfinite(item) and item > 0 for item in (width, height)):
+        raise CoordinateTransformError(code)
+    return width, height
+
+
+def _coordinate_rect(value: Any, code: str) -> tuple[float, float, float, float]:
+    if not isinstance(value, Mapping):
+        raise CoordinateTransformError(code)
+    values = [value.get(name) for name in ("x", "y", "width", "height")]
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in values):
+        raise CoordinateTransformError(code)
+    x, y, width, height = (float(item) for item in values)
+    if not all(math.isfinite(item) for item in (x, y, width, height)):
+        raise CoordinateTransformError(code)
+    if x < 0 or y < 0 or width <= 0 or height <= 0:
+        raise CoordinateTransformError(code)
+    return x, y, width, height
+
+
+def _coordinate_offset(value: Any, code: str) -> tuple[float, float]:
+    if not isinstance(value, Mapping):
+        raise CoordinateTransformError(code)
+    values = [value.get("x"), value.get("y")]
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in values):
+        raise CoordinateTransformError(code)
+    x, y = (float(item) for item in values)
+    if not all(math.isfinite(item) and item >= 0 for item in (x, y)):
+        raise CoordinateTransformError(code)
+    return x, y
+
+
+def _coordinate_scale(value: Any, code: str) -> tuple[float, float]:
+    if not isinstance(value, Mapping):
+        raise CoordinateTransformError(code)
+    values = [value.get("x"), value.get("y")]
+    if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in values):
+        raise CoordinateTransformError(code)
+    x, y = (float(item) for item in values)
+    if not all(math.isfinite(item) and item > 0 for item in (x, y)):
+        raise CoordinateTransformError(code)
+    return x, y
+
+
+def transform_css_viewport_bbox(source_bbox: Any, transform: Any) -> dict[str, Any]:
+    """Convert a CSS viewport bbox to PNG pixels using a calibrated clip.
+
+    ``devicePixelRatio`` is provenance only.  Scale is derived once from the
+    actual screenshot pixels divided by the CSS clip dimensions, so DPR is
+    never multiplied a second time.  Full-page/sticky/unknown mappings are
+    outside this helper's contract.
+    """
+
+    if not isinstance(transform, Mapping):
+        raise CoordinateTransformError("coordinate_transform_missing")
+    if transform.get("status") != "calibrated":
+        raise CoordinateTransformError("coordinate_transform_invalid")
+    if transform.get("sourceSpace") != "css-viewport" or transform.get("targetSpace") != "png-pixels":
+        raise CoordinateTransformError("coordinate_transform_invalid")
+
+    viewport_width, viewport_height = _coordinate_dimensions(
+        transform.get("viewportSize"), "coordinate_viewport_invalid"
+    )
+    clip_x, clip_y, clip_width, clip_height = _coordinate_rect(
+        transform.get("clip"), "coordinate_clip_invalid"
+    )
+    screenshot_size = positive_size(transform.get("screenshotSize"))
+    if screenshot_size is None:
+        raise CoordinateTransformError("coordinate_screenshot_size_invalid")
+    _coordinate_offset(transform.get("scrollOffset"), "coordinate_scroll_offset_invalid")
+    dpr = transform.get("devicePixelRatio")
+    if isinstance(dpr, bool) or not isinstance(dpr, (int, float)):
+        raise CoordinateTransformError("coordinate_dpr_invalid")
+    if not math.isfinite(float(dpr)) or float(dpr) <= 0:
+        raise CoordinateTransformError("coordinate_dpr_invalid")
+    if clip_x + clip_width > viewport_width + 1e-6 or clip_y + clip_height > viewport_height + 1e-6:
+        raise CoordinateTransformError("coordinate_clip_out_of_viewport")
+
+    scale_x = screenshot_size[0] / clip_width
+    scale_y = screenshot_size[1] / clip_height
+    declared_scale = transform.get("scale")
+    if declared_scale is not None:
+        declared_x, declared_y = _coordinate_scale(declared_scale, "coordinate_scale_invalid")
+        if not math.isclose(declared_x, scale_x, rel_tol=1e-6, abs_tol=1e-6) or not math.isclose(
+            declared_y, scale_y, rel_tol=1e-6, abs_tol=1e-6
+        ):
+            raise CoordinateTransformError("coordinate_scale_mismatch")
+
+    source = bbox(source_bbox, None)
+    if source is None:
+        raise CoordinateTransformError("coordinate_source_bbox_invalid")
+    source_x, source_y, source_width, source_height = source
+    if (
+        source_x < clip_x - 1e-6
+        or source_y < clip_y - 1e-6
+        or source_x + source_width > clip_x + clip_width + 1e-6
+        or source_y + source_height > clip_y + clip_height + 1e-6
+    ):
+        raise CoordinateTransformError("coordinate_source_bbox_out_of_clip")
+
+    output_mapping = {
+        "x": (source_x - clip_x) * scale_x,
+        "y": (source_y - clip_y) * scale_y,
+        "width": source_width * scale_x,
+        "height": source_height * scale_y,
+    }
+    if bbox(output_mapping, screenshot_size) is None:
+        raise CoordinateTransformError("coordinate_output_bbox_out_of_bounds")
+    return {
+        "bbox": {name: round(value, 6) for name, value in output_mapping.items()},
+        "scale": {"x": round(scale_x, 12), "y": round(scale_y, 12)},
+        "devicePixelRatioApplied": False,
+    }
+
+
+def _same_bbox(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
+    return all(math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-5) for a, b in zip(left, right))
+
+
+def _annotation_coordinate_findings(
+    item: Mapping[str, Any],
+    index: int,
+    source_sha: Any,
+    state: Mapping[str, Any] | None,
+    expected_size: tuple[int, int] | None,
+) -> list[dict[str, Any]]:
+    source = item.get("source", item.get("provenance"))
+    source_name = source.strip().lower() if isinstance(source, str) else ""
+    if source_name not in DOM_ANNOTATION_SOURCES:
+        return [_finding("coordinate_source_unsupported", role="annotation", index=index)]
+
+    provenance = item.get("coordinateProvenance")
+    if not isinstance(provenance, Mapping):
+        return [_finding("coordinate_provenance_missing", role="annotation", index=index)]
+
+    findings: list[dict[str, Any]] = []
+    state_id = state.get("id") if isinstance(state, Mapping) else None
+    if not is_text(provenance.get("captureStateId")) or provenance.get("captureStateId") != state_id:
+        findings.append(_finding("coordinate_capture_state_mismatch", role="annotation", index=index))
+    provenance_sha = provenance.get("sourceSha256")
+    if not is_sha256(provenance_sha):
+        findings.append(_finding("coordinate_source_sha256_invalid", role="annotation", index=index))
+    elif is_sha256(source_sha) and provenance_sha.casefold() != source_sha.casefold():
+        findings.append(_finding("coordinate_source_sha256_mismatch", role="annotation", index=index))
+
+    try:
+        transformed = transform_css_viewport_bbox(
+            provenance.get("sourceBbox"),
+            state.get("coordinateTransform") if isinstance(state, Mapping) else None,
+        )
+    except CoordinateTransformError as error:
+        findings.append(_finding(error.code, role="annotation", index=index))
+        return findings
+
+    actual = bbox(item.get("bbox"), expected_size)
+    expected = bbox(transformed["bbox"], expected_size)
+    if actual is None or expected is None:
+        return findings
+    if source_name == "dom":
+        if not _same_bbox(actual, expected):
+            findings.append(_finding("coordinate_bbox_mismatch", role="annotation", index=index))
+        return findings
+
+    adjustment_reason = provenance.get("adjustmentReason")
+    if not is_text(adjustment_reason):
+        findings.append(_finding("coordinate_adjustment_reason_missing", role="annotation", index=index))
+    transformed_bbox = bbox(provenance.get("transformedBbox"), expected_size)
+    if transformed_bbox is None:
+        findings.append(_finding("coordinate_transformed_bbox_missing", role="annotation", index=index))
+    elif not _same_bbox(transformed_bbox, expected):
+        findings.append(_finding("coordinate_transformed_bbox_mismatch", role="annotation", index=index))
+    if not _same_bbox(actual, expected):
+        findings.append(_finding("coordinate_manual_adjustment_pending", role="annotation", index=index))
+    return findings
 
 
 def _provenance_value(
@@ -239,7 +457,11 @@ def _validate_annotation_provenance(
         findings.append(_finding("annotation_provenance_input_mismatch", role="drawingInputSha256"))
 
 
-def validate_manifest(manifest_path: str | Path, base_dir: str | Path | None = None) -> dict[str, Any]:
+def validate_manifest(
+    manifest_path: str | Path,
+    base_dir: str | Path | None = None,
+    require_coordinate_provenance: bool = False,
+) -> dict[str, Any]:
     path = Path(manifest_path).expanduser().resolve()
     findings: list[dict[str, Any]] = []
     report: dict[str, Any] = {
@@ -262,6 +484,9 @@ def validate_manifest(manifest_path: str | Path, base_dir: str | Path | None = N
         findings.append(_finding("manifest_unreadable"))
         return report
 
+    if require_coordinate_provenance:
+        report["limitations"].append("coordinate_provenance_does_not_prove_pixel_alignment")
+
     schema = raw.get("schema_version")
     if isinstance(schema, bool) or schema != SCHEMA_VERSION:
         findings.append(_finding("schema_version_invalid"))
@@ -283,10 +508,32 @@ def validate_manifest(manifest_path: str | Path, base_dir: str | Path | None = N
     expected_size = positive_size(raw.get("originalImageSize"))
     if expected_size is None:
         findings.append(_finding("original_image_size_invalid", role="originalImageSize"))
+    state = raw.get("captureState")
     findings.extend(
         _finding("capture_binding_invalid", role="captureState")
         for _ in capture_binding_errors(raw, expected_size, require=True)
     )
+
+    if require_coordinate_provenance:
+        if capture_kind not in {"viewport-sequence", "detail"}:
+            findings.append(_finding("coordinate_capture_kind_unsupported", role="captureKind"))
+        coordinate_transform = state.get("coordinateTransform") if isinstance(state, Mapping) else None
+        if not isinstance(coordinate_transform, Mapping):
+            findings.append(_finding("coordinate_transform_missing", role="captureState"))
+        else:
+            try:
+                clip = _coordinate_rect(coordinate_transform.get("clip"), "coordinate_clip_invalid")
+                transform_css_viewport_bbox(
+                    {"x": clip[0], "y": clip[1], "width": min(clip[2], 1.0), "height": min(clip[3], 1.0)},
+                    coordinate_transform,
+                )
+            except CoordinateTransformError as error:
+                findings.append(_finding(error.code, role="coordinateTransform"))
+            screenshot_size = positive_size(coordinate_transform.get("screenshotSize"))
+            if expected_size is not None and screenshot_size is not None and screenshot_size != expected_size:
+                findings.append(_finding("coordinate_screenshot_size_mismatch", role="coordinateTransform"))
+            elif expected_size is not None and screenshot_size is None:
+                findings.append(_finding("coordinate_screenshot_size_invalid", role="coordinateTransform"))
 
     review_status = _status(raw.get("reviewStatus"), REVIEW_STATUSES)
     if review_status is None:
@@ -438,6 +685,16 @@ def validate_manifest(manifest_path: str | Path, base_dir: str | Path | None = N
                 findings.append(_finding("approval_pending", role="annotation", index=index))
             elif status == "blocked":
                 findings.append(_finding("approval_blocked", role="annotation", index=index))
+            if require_coordinate_provenance:
+                findings.extend(
+                    _annotation_coordinate_findings(
+                        item,
+                        index,
+                        source_hash,
+                        state if isinstance(state, Mapping) else None,
+                        expected_size,
+                    )
+                )
 
     protected_boxes: list[tuple[float, float, float, float] | None] = []
     protected = raw.get("protectedAreas", raw.get("protectedControls", []))
@@ -479,7 +736,22 @@ def validate_manifest(manifest_path: str | Path, base_dir: str | Path | None = N
                 findings.append(_finding("annotation_provenance_invalid", role="annotationProvenance"))
             else:
                 _validate_annotation_provenance(raw, annotation_provenance, files, findings)
-    geometry_codes = [item["code"] for item in findings if item["code"] not in PENDING_CODES]
+    if require_coordinate_provenance:
+        coordinate_findings = [item for item in findings if item["code"].startswith("coordinate_")]
+        coordinate_status = "pass"
+        if coordinate_findings:
+            coordinate_status = (
+                "blocked"
+                if all(item["code"] in COORDINATE_BLOCKED_CODES for item in coordinate_findings)
+                else "fail"
+            )
+        report["coordinate_provenance"] = {"required": True, "status": coordinate_status}
+
+    geometry_codes = [
+        item["code"]
+        for item in findings
+        if item["code"] not in PENDING_CODES and item["code"] not in COORDINATE_BLOCKED_CODES
+    ]
     report["geometry_status"] = "fail" if geometry_codes else "pass"
     if geometry_codes:
         report["manifest_status"] = "fail"
@@ -521,6 +793,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--base-dir")
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--require-coordinate-provenance",
+        action="store_true",
+        help="Require calibrated CSS-viewport to PNG provenance for DOM annotations",
+    )
     return parser
 
 
@@ -528,7 +805,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if _output_conflicts(args.output, args.manifest, args.base_dir):
         return 2
-    report = validate_manifest(args.manifest, args.base_dir)
+    report = validate_manifest(args.manifest, args.base_dir, args.require_coordinate_provenance)
     payload = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output == "-":
         sys.stdout.write(payload)

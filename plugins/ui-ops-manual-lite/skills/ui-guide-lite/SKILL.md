@@ -5,7 +5,7 @@ description: Use when creating or revising a 系統 UI 操作說明書, user man
 
 # UI 操作說明書（輕量版）
 
-建立可操作、可驗證的系統 UI 說明書。輕量版以實機畫面和可追溯來源描述 UI，不猜測控制項或後續影響；使用 Python、`python-docx` 和 Pillow 建立 DOCX、處理圖片與做可驗證的結構 QA。版本候選為 `0.5.0`，證據、隱碼、操作語意與交付阻擋標準對標一般版 `0.5.0`；差異只在 renderer 不可用時的版面／結構可驗證範圍。
+建立可操作、可驗證的系統 UI 說明書。輕量版以實機畫面和可追溯來源描述 UI，不猜測控制項或後續影響；使用 Python、`python-docx` 和 Pillow 建立 DOCX、處理圖片與做可驗證的結構 QA。版本候選為 `0.5.1`，證據、隱碼、操作語意與交付阻擋標準對標一般版 `0.5.1`；差異只在 renderer 不可用時的版面／結構可驗證範圍。
 
 本版流程不依賴或使用 `Documents`、Word 或 LibreOffice renderer。可做 DOCX 內容讀回、嵌圖清單／雜湊、圖說與結構檢查，以及以 Pillow 產生實際嵌圖尺寸的內容預覽；這些結果只能稱為內容預覽或結構／封裝檢查，不能宣稱已通過 Word 分頁、字型、換行或最終視覺渲染。`render_visual.status` 使用 `not_performed` 或 `out_of_scope` 並附原因時，若其他適用關卡完成，仍可在輕量版範圍內正式交付；本流程未使用 renderer 本身不構成 `blocked`。
 
@@ -22,6 +22,12 @@ description: Use when creating or revising a 系統 UI 操作說明書, user man
 
 QA record 記錄本次 `ui-ops-manual-lite` 版本、實際讀過的相對 reference 路徑、適用 schema、代表圖／批次、唯一 finding ledger、資產 freeze／checkpoint、回歸和實際整改輪次。不要用一份新的審核結果取代既有 ledger，也不要把完整版的 reference 或安裝狀態當作 lite 的前置條件。
 
+## 開發版驗收基準（不套用到每次製作任務）
+
+本節只規範 `ui-ops-manual-lite` plugin 本身的開發／回歸驗收，不要求每次製作手冊都重跑多模型。需要進行 plugin 回歸時，使用獨立、乾淨且互不共享前次對話或產物的工作區與模型執行者，固定配置如下：Terra（medium）、Sol（low）、Astra（medium）。每個模型使用相同的原始需求、凍結 plugin／原始碼與驗收標準；各自獨立盤點，不提供已整理的 `scopeMatrix`／`fieldInventory`、既有文件、回饋或答案，亦不得把等待時間重複計入多個模型的製作時間。
+
+Luna 不列入本版的正式驗收通過條件。若保留 Luna 結果，只能標為參考／能力觀察，不得用來宣稱 plugin 已通過或以反覆重建 Luna 產物取代其他模型的驗收。每次回歸仍以文件可用程度、證據完整性、隱碼／標註正確性、需求覆蓋與返工成本的平衡判定；低階模型的目標是產出可接續修正的功能性文件，不是無限重建直到一次完成。完整政策見 [development-acceptance.md](references/development-acceptance.md)。
+
 ## 新任務第一輪回覆與預設
 
 若目前任務尚未確認必要範圍或交付資訊，第一輪回覆先提出「預設範圍確認」；若使用者在目前任務已明確接受預設、已提供目標畫面與交付資料夾，沿用該確認，不重複詢問同一授權。若只缺一兩項，只詢問缺項，不重新送出整份表單。
@@ -32,7 +38,7 @@ QA record 記錄本次 `ui-ops-manual-lite` 版本、實際讀過的相對 refer
 2. 後端 repository（可選）：URL／本機路徑與 branch、tag 或 commit；只用於確認資料異動與成功影響。
 3. 目標畫面：URL／路徑清單或上傳清單；沒有清單不自行猜測範圍。
 4. 交付：文件名稱、初始版本和交付資料夾；未確認前不寫入未授權位置。
-5. 截圖：每個目標畫面包含入口／到達路徑、完整主要流程和畫面選項；長頁依完整性規範使用 full-page 或有序 viewport sequence。
+5. 截圖：每個目標畫面包含入口／到達路徑、完整主要流程和畫面選項；新 DOM 取證預設使用完整 viewport，短頁可用單張 `viewport-sequence`，長頁使用有序 `viewport-sequence`。`full-page` 不適用於新 DOM strict gate；detail 必須回指同一狀態的完整主圖。
 6. UI 覆蓋：實際可見的欄位、表頭、必填標記、icon、按鈕、狀態與限制；無法確認的欄位寫「待確認」。
 7. 隱碼／標註：精準遮蔽敏感值，保留金額與操作 labels；互動目標以紅框和編號標示。
 8. 驗證：確認使用 Python-only DOCX 結構／內容讀回和獨立 review；不把 Word renderer 當作 lite 的交付前置條件。
@@ -66,16 +72,18 @@ macOS/Linux shell: "<venv>/bin/python" "<skill-path>/scripts/run_tests.py" --tes
 
 ## 取證、完整主圖與來源
 
-以使用者確認的功能清單建立覆蓋表。每個必要操作／狀態都要有完整頁面主圖與最終文件位置；局部放大圖只能補充，不能取代主圖。先選一張能代表頁面上下文、操作目標和隱碼情況的代表圖，完成 raw → redacted → annotated → 暫存 DOCX／讀回的端到端流程並通過圖片關卡，再按畫面／狀態分小批次。每張圖都要有自己的 `captureState.id`、raw/source SHA-256、viewport／scroll／full-page 校準依據、redaction／annotation bbox 和 manifest；不同狀態即使尺寸相同也不得沿用舊座標。
+以使用者確認的功能清單建立唯一 `scopeMatrix`、`fieldInventory` 和 `assetLedger` 三份相互連結的 QA 骨架。`scopeMatrix` 管理功能、主／子配置區、獨特條件／狀態與最小代表案例；`fieldInventory` 管理由實機確認的控制項類型、必填、值來源、作用條件、結果和 capture evidence；`assetLedger` 管理 raw、redacted、annotated、manifest、caption、DOCX、hash、依賴與不可覆寫 checkpoint。三者是後續覆蓋表、步驟、欄位表、caption、批次和 review 的唯一來源，不另造互相矛盾的清單。
+
+每個必要操作／狀態都要有完整頁面主圖與最終文件位置；局部放大圖只能補充，不能取代主圖。先選一張能代表頁面上下文、操作目標和隱碼情況的代表圖，完成 raw → redacted → annotated → 暫存 DOCX／讀回的端到端流程並通過圖片關卡，再按畫面／狀態分小批次。每張圖都要有自己的 `captureState.id`、raw/source SHA-256、viewport／scroll 校準依據、redaction／annotation bbox 和 manifest；不同狀態即使尺寸相同也不得沿用舊座標。
 
 主圖規則：
 
-- 預設保留整個應用程式頁面、頁首／標題、導覽或側邊欄、主要內容和操作區的相對位置。短頁用完整 viewport；長頁使用工具支援的 full-page，或以有順序、scroll offset、重疊區域及各自 manifest 的 `viewport-sequence` 覆蓋內容。
-- full-page 可能重排、改變 lazy content 或讓 fixed header 覆蓋內容。每張 raw 拍完後重新確認實際 PNG 尺寸和 DOM／文字 bbox；**不能用 `pngHeight / viewportHeight` 當成全頁像素倍率**，也不能把拍攝前的固定 y、列距或 viewport 座標直接套到全頁 PNG。依該張圖的實際輸出、已知控制項和 scroll 定義校準並記錄。
+- 預設保留整個應用程式頁面、頁首／標題、導覽或側邊欄、主要內容和操作區的相對位置。新 DOM 取證使用完整 viewport（不是局部 crop）；短頁可用單張 `viewport-sequence`，長頁使用有順序、scroll offset、重疊區域及各自 manifest 的 `viewport-sequence` 覆蓋內容。`full-page` 不適用於新 DOM strict gate。
+- `viewport-sequence` 的每張 raw 都可能受 scroll、lazy content 或 fixed header 影響。每張 raw 拍完後重新確認實際 PNG 尺寸和 DOM／文字 bbox；不能用 `pngWidth / viewportWidth` 或 `pngHeight / viewportHeight` 當全局倍率，也不能把拍攝前的固定 y、列距或 viewport 座標直接套到另一張 PNG。依該張圖的實際輸出、已知控制項和 scroll 定義校準並記錄。
 - 彈窗保留其頁面背景和完整彈窗；內容過長時按同一連續 viewport 規則補齊。不得只裁切欄位、按鈕或錯誤訊息作唯一操作圖。
 - 使用者沒有明示時只用實際截圖。不得用生成、重繪或抽象圖冒稱 screenshot；取得不到適用實圖時保留 `draft`／待補證據並說明缺件。
 
-每張圖的來源使用 `sourceKind`：`captured`、`provided`、`reused`，或使用者明示且記錄批准的 `schematic`。覆蓋表要標示 `captureKind`（`full-page`、`viewport-sequence`、`detail`）；`detail` 必須指向同一狀態的完整主圖。
+每張圖的來源使用 `sourceKind`：`captured`、`provided`、`reused`，或使用者明示且記錄批准的 `schematic`。新 DOM 覆蓋表使用 `captureKind`（`viewport-sequence`、`detail`）；既有／provided 圖片若保留 `full-page`，只能依相容規則處理，不能作為新 DOM 座標證據。`detail` 必須指向同一狀態的完整主圖。
 
 ## 非截圖圖表（條件式）
 
@@ -85,7 +93,7 @@ macOS/Linux shell: "<venv>/bin/python" "<skill-path>/scripts/run_tests.py" --tes
 
 預設遮蔽姓名、身分／客戶／會員／員工 ID、地址、電話、電子郵件、保單／帳單／合約／交易／案件識別碼、密碼、權杖、API key、session 值及不應外流的內部帳號。**金額預設保留**；只有使用者或資料政策明確要求時才記錄金額遮蔽。欄名、控制項 labels、按鈕文字和必要操作提示要保留且可讀。遮蔽只覆蓋實際敏感值和必要 padding，不遮住 protected control／label；manifest、caption、檔名和 review evidence 不得含敏感原值。
 
-固定順序是 raw → redacted → annotated → DOCX。raw 只留在受限 QA 工作區，不嵌入 DOCX 或交付包。每張圖建立一份整合 per-image screenshot manifest（包含 redactions 與 annotations）；座標優先由當次 DOM／文字 `getBoundingClientRect` 或 `Range.getBoundingClientRect` 測得，在確認 device pixel ratio、scrollbar、full-page 重排、fixed header 和 scroll 定義後逐張校準。DOM 不可用時不得猜測座標。
+固定順序是 raw → redacted → annotated → DOCX。raw 只留在受限 QA 工作區，不嵌入 DOCX 或交付包。每張圖建立一份整合 per-image screenshot manifest（包含 redactions 與 annotations）；座標優先由當次 DOM／文字 `getBoundingClientRect` 或 `Range.getBoundingClientRect` 測得，在確認 device pixel ratio、scrollbar、viewport-sequence 的 scroll、fixed header 和 scroll 定義後逐張校準。DOM 不可用時不得猜測座標。
 
 若輸入 bytes 的實際格式與檔名不同，先用 `scripts/capture.py canonicalize` 保存不可變原始 bytes、產生同尺寸同像素 canonical PNG 並寫 `captureProvenance`；缺少真實 viewport／scroll／capture id／capture kind／calibration 時保留 `metadataStatus: "incomplete"`，不得用 PNG 尺寸或 0 補值，正式 gate 會阻擋。`redact.py` 與 `annotate.py` 的工具 provenance 由同一 manifest 產生，manifest 仍直接保存 redacted／annotated hash；`annotationProvenance` 必須在獨立 review 的 `imageEvidence` 與 `reviewed_files` 綁定。review status 變更不重畫圖片，父圖、bbox、id、cursor 或 badge 變更則攔截舊 artifact。
 
@@ -116,17 +124,21 @@ builder 可以先直接看圖並交接 `draft`／待 reviewer 狀態；最終交
 ```text
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\redact.py" check --image "<qa>\raw.png" --redacted "<qa>\redacted.png" --manifest "<qa>\screenshot.json" --provenance "<qa>\provenance.json" --require-checked
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\annotate.py" check --image "<qa>\redacted.png" --annotations "<qa>\screenshot.json" --require-approved
-& "<venv>\Scripts\python.exe" "<skill-path>\scripts\validate_screenshot_manifest.py" --manifest "<qa>\screenshot.json" --output "<qa>\screenshot-validation.json"
+& "<venv>\Scripts\python.exe" "<skill-path>\scripts\validate_screenshot_manifest.py" --manifest "<qa>\screenshot.json" --output "<qa>\screenshot-validation.json" --require-coordinate-provenance
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\build_docx.py" --manifest "<workspace>\manual.json" --output "<deliverable>\manual.docx"
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\preview_docx.py" --docx "<deliverable>\manual.docx" --output-dir "<qa>\content-preview" --dpi 96
 & "<venv>\Scripts\python.exe" "<skill-path>\scripts\verify_docx.py" --docx "<deliverable>\manual.docx" --manifest "<workspace>\manual.json"
-& "<venv>\Scripts\python.exe" "<skill-path>\scripts\audit_delivery.py" --docx "<deliverable>\manual.docx" --output "<qa>\structure.json"
-& "<venv>\Scripts\python.exe" "<skill-path>\scripts\audit_delivery.py" --docx "<deliverable>\manual.docx" --review "<qa>\review.json" --manifest "<workspace>\manual.json" --output "<qa>\review-validation.json"
+& "<venv>\Scripts\python.exe" "<skill-path>\scripts\audit_delivery.py" --docx "<deliverable>\manual.docx" --output "<qa>\structure.json" --image-evidence "<qa>\delivered-images.json" --require-default-layout
+& "<venv>\Scripts\python.exe" "<skill-path>\scripts\audit_delivery.py" --docx "<deliverable>\manual.docx" --review "<qa>\review.json" --manifest "<workspace>\manual.json" --output "<qa>\review-validation.json" --image-evidence "<qa>\delivered-images.json" --require-default-layout
 ```
+
+上列 validator 命令適用新 DOM 標註流程，必須保留 `--require-coordinate-provenance`；沿用舊 manifest 的相容模式不能冒充本次新 DOM 標註已通過。
 
 對每份圖片證據固定使用 [screenshot-manifest.md](references/screenshot-manifest.md) 的單一整合 manifest，依序執行 `redact.py`、`annotate.py` 與 `validate_screenshot_manifest.py` adapters，讀回 source／redacted／annotated hashes、capture calibration、幾何與 review status；不要另造第三份圖片 manifest。validator 的 exit 1 仍可能已寫出 `blocked`／`fail` 報告，必須讀取 `geometry_status`、`manifest_status` 和 `semantic_review`。`verify_docx.py` exit 0 只代表列出的結構檢查通過；`audit_delivery.py` exit 0 只代表報告寫出。任何機械報告都不能代替直接看圖、最終 DOCX 內容讀回或獨立 reviewer。
 
 上列不帶 `--review`／`--manifest` 的 `structure.json` 只是前置機械報告，不能作為正式完成條件。正式交付必須在另一位 reviewer 完成 review JSON 後執行最後一行，並檢查 `independent_review.status`、四類 checks、`image_evidence_chain.status` 和所有 hash；只要正式命令帶 `--manifest`，每張實際嵌入圖都要在 review 的 `imageEvidence` 中回指同一份整合 screenshot manifest、provenance 與已核對的 support files。
+
+`delivered-images.json` 必須由同一 QA record 的 `assetLedger` freeze 產生，只列交付的 redacted／annotated 圖與 SHA-256；`audit_delivery.py --image-evidence` 會比對 DOCX 實際嵌入媒體，舊嵌圖、freeze 後改圖、raw 路徑或未列入 allowlist 的媒體都會被阻擋。預設版面使用 `--require-default-layout` 時，兩次 audit 都要帶同一組 flag；它只機械核對更新紀錄表首列，不取代內容讀回或 independent review。
 
 交接記錄逐項回報：隱碼、標註、結構／幾何、內容讀回、獨立審核、證據雜湊、交付範圍。renderer、權限與 fallback 狀態只在對話／QA record 回報，不寫進 DOCX。若缺圖、漏遮、誤導流程、遮 controls 或內容不可讀，回報 blocker 與 evidence，不以少量代表圖或 draft 宣稱完成。
 
@@ -136,7 +148,7 @@ builder 可以先直接看圖並交接 `draft`／待 reviewer 狀態；最終交
 | --- | --- |
 | 每次任務都重新要求已接受的預設 | 讀取目前任務的確認，沿用已確認範圍；只問缺少的目標或交付資訊。 |
 | 只有局部欄位／按鈕圖 | 返回完整頁面主圖；detail 只能補充。 |
-| full-page 使用 `pngHeight / viewportHeight` 或舊固定 y | 回到該張 raw，以實際輸出和校準 control 重新測量。 |
+| viewport-sequence（或既有 full-page）使用 `pngHeight / viewportHeight` 或舊固定 y | 回到該張 raw，以實際輸出和校準 control 重新測量；既有 full-page 不能送新 DOM strict gate。 |
 | 生成／重繪 UI 取代實圖 | 標記待補證據／draft；除非使用者明示並留下 schematic 批准，不得冒稱 screenshot。 |
 | 敏感值漏遮或遮住 controls／labels | 精準縮小 redaction bbox，保留金額（除非明示遮蔽）和操作文字，重建下游圖片與 DOCX。 |
 | source 已改但 DOCX／review 未更新 | 讀回真正 output，重算受影響 hash、重建 checkpoint 並重做 review。 |

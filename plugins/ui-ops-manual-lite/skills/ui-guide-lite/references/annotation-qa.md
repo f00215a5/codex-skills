@@ -10,7 +10,7 @@
 
 編號 badge 預設放在框外左上並在邊界內 fallback；若會遮住鄰近 control，可在同一 annotation item 以 `badgePosition`／`badge` 指定 `{ "x": ..., "y": ... }`，或指定 `anchor`（`top-left`／`top-right`／`bottom-left`／`bottom-right`）及 `offset`。工具會拒絕超出圖片的 badge，仍由 reviewer 直接確認沒有遮住旁邊 control。這是同一份 manifest 的可選欄位，不另造座標 schema。
 
-能取 DOM 時，先用 `getBoundingClientRect` 取得控制項邊界，再依當張實際 PNG、device pixel ratio、scrollbar、full-page 是否重排和 scroll 定義校準。一般 viewport 只有在確認縮放模型後才可按 `x = rect.left × pngWidth / viewportWidth` 等比例換算；full-page 不可用 `pngHeight / viewportHeight` 當全局倍率，必須以該張圖的 known control／explicit calibration 重新測量並記錄。不要假設截圖倍率為 1。
+能取 DOM 時，先用 `getBoundingClientRect` 取得控制項邊界，再保存同一 capture state 的 viewport／clip／實際 PNG 尺寸和浮點換算結果。一般 viewport 必須使用 validator 的 `transform_css_viewport_bbox`；device pixel ratio 只作 provenance，不可再乘一次。full-page、sticky header 或未知 clip 不可猜測全局倍率，必須以該張圖的 known control／explicit calibration 重新測量並記錄。不要假設截圖倍率為 1。
 
 ## 先預覽，再核對，再批准
 
@@ -45,6 +45,8 @@ macOS/Linux:
 ```
 
 `--require-approved` 只是建置前的狀態門檻；它不能證明 reviewer 看過正確的控制項。builder 的 `verified` 也不能代替獨立交付審核。若圖片無法檢視，標註 `operation` 與隱碼相關 review 保持 `blocked`，不要填 pass；可繼續其他已授權工作並交付 draft。
+
+DOM annotation 必須再執行 `validate_screenshot_manifest.py --require-coordinate-provenance`。`dom-manual-adjusted` 必須保存 `adjustmentReason`／`transformedBbox`；人工 bbox 與浮點換算不一致時 gate 保持 blocked，不能只改成 `checked`。實際畫圖可因 Pillow 的整數像素 rasterization 產生小於一像素的視覺差異，仍須由 reviewer 直接看 annotated PNG。
 
 `annotate.py draw --provenance-output` 會記錄 redacted 父圖、annotated 輸出和由 `id`、bbox、cursor、badge、stroke、font size 組成的 drawing-input hash。`pending`／`verified` 等 review status 不在 drawing input；改變父圖、bbox、id、cursor 或 badge 時，validator／正式 review 必須攔截舊 annotated artifact。獨立 review 的 `imageEvidence` 和 `reviewed_files` 也要列出並 hash 綁定這個自動產出的 annotation provenance。
 

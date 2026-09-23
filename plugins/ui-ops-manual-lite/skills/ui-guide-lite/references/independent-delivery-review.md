@@ -67,21 +67,23 @@ review JSON 至少包含下列欄位（完整可接受值以 `scripts/audit_deli
 
 ```text
 Windows PowerShell:
-& "<venv>\Scripts\python.exe" "<skill>\scripts\audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure.json"
+& "<venv>\Scripts\python.exe" "<skill>\scripts\audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure.json" --image-evidence "<qa>/delivered-images.json" --require-default-layout
 macOS/Linux:
-"<venv>/bin/python" "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure.json"
+"<venv>/bin/python" "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --output "<qa>/structure.json" --image-evidence "<qa>/delivered-images.json" --require-default-layout
 ```
 
 reviewer 讀取需求、最終 DOCX、所有嵌入圖片、redacted／annotated 圖片與支持檔案，完成上面的 review JSON（每張嵌入圖都要有 `imageEvidence`，並回指同一份整合 screenshot manifest、provenance 和已核對的 support files）。再用不同輸出檔驗證其綁定；這個帶 `--review` 與 `--manifest` 的命令才是正式交付 gate：
 
 ```text
 Windows PowerShell:
-& "<venv>\Scripts\python.exe" "<skill>\scripts\audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --manifest "<workspace>/manual.json" --output "<qa>/review-validation.json"
+& "<venv>\Scripts\python.exe" "<skill>\scripts\audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --manifest "<workspace>/manual.json" --output "<qa>/review-validation.json" --image-evidence "<qa>/delivered-images.json" --require-default-layout
 macOS/Linux:
-"<venv>/bin/python" "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --manifest "<workspace>/manual.json" --output "<qa>/review-validation.json"
+"<venv>/bin/python" "<skill>/scripts/audit_delivery.py" --docx "<final.docx>" --review "<qa>/review.json" --manifest "<workspace>/manual.json" --output "<qa>/review-validation.json" --image-evidence "<qa>/delivered-images.json" --require-default-layout
 ```
 
 檢查 `mechanical_status` 與 `independent_review.status`，不能只看 exit code；exit code 0 代表報告已寫出，不代表 DOCX、圖片或 review 自動通過。若 audit 提示 `manual_review`，由 reviewer 依實際文件與使用者已明示的版型例外判讀；不要把它靜默當作 pass。
+
+`delivered-images.json` 是同一 QA record 的 `assetLedger` freeze allowlist，格式為 `{"schema_version": 1, "assets": [{"path": "annotated/step.png", "sha256": "..."}]}`。`--image-evidence` 會比對 DOCX 實際嵌入的媒體 bytes，攔截舊圖、freeze 後改圖、raw 路徑與未列入 allowlist 的圖；`--require-default-layout` 只檢查更新紀錄表首列的 `版本`／`日期`／`更新內容`，不取代內容讀回或圖片語意審核。兩次 audit 必須使用同一 allowlist 與版面 flag。
 
 macOS／Linux 使用同一 venv 根目錄的 `bin/python` 取代 `Scripts\python.exe`；這只改 Python launcher，不改 manifest、review schema 或檢查範圍。
 

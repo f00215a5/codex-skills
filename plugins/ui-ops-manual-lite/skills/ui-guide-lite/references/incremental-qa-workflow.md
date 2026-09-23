@@ -4,9 +4,12 @@
 
 ## 代表圖、小批次與回歸
 
-1. 選一張代表實際操作、頁面上下文、狀態與必要隱碼的主圖，完成 raw、redacted、annotated、每張 manifest、幾何／hash 檢查、100% 直接看圖、暫存 DOCX build 和輸出讀回。記錄 `captureState.id`、source hash、viewport、scroll、full-page／viewport 校準、控制項／敏感值 bbox。
-2. 代表圖通過後，按畫面與狀態拆成小批次。每批逐張使用自己的 capture state、hash、bbox、caption 和 manifest，通過同一組圖片／結構關卡後再進下一批；不得把代表圖的列距、固定 y、舊 capture state 或舊座標套到另一張圖。
-3. 某批出現共通缺陷時先暫停該批，按依賴修正所有受影響資產與 output，再回歸檢查；不能只修最新訊息點名的一張，也不能為取得 pass 刪減 assert 或縮小已確認範圍。
+1. 在第一張圖前建立同一 QA record 的 `scopeMatrix`、`fieldInventory` 和 `assetLedger`。`scopeMatrix` 先列出已確認功能的主／子配置區、獨特條件／狀態和最小代表案例；`fieldInventory` 只回填實機／可追溯來源已確認的控制項、必填、值來源、作用條件與結果；`assetLedger` 綁定每個 raw、redacted、annotated、manifest、caption、DOCX、hash、依賴和 checkpoint。完整需求骨架與實際已建置頁面分開記錄，不能用少量代表成品代替未取證範圍。
+2. 選一張代表實際操作、頁面上下文、狀態與必要隱碼的主圖，完成 raw、redacted、annotated、每張 manifest、幾何／hash 檢查、100% 直接看圖、暫存 DOCX build 和輸出讀回。記錄 `captureState.id`、source hash、viewport、scroll、full-page／viewport 校準、控制項／敏感值 bbox。
+3. 代表圖通過後，按畫面與狀態拆成小批次。每批逐張使用自己的 capture state、hash、bbox、caption 和 manifest，通過同一組圖片／結構關卡後再進下一批；不得把代表圖的列距、固定 y、舊 capture state 或舊座標套到另一張圖。
+4. 某批出現共通缺陷時先暫停該批，按依賴修正所有受影響資產與 output，再回歸檢查；不能只修最新訊息點名的一張，也不能為取得 pass 刪減 assert 或縮小已確認範圍。
+
+相同行為只建立一份共用步驟，其他配置以差異表記錄實際不同的欄位、條件或結果；只有獨特條件／狀態會改變操作或讀者判斷時才新增最小代表案例，不按每筆資料或每種類型重做同一流程。第二輪可承接前一輪獨立 review 中**個別語意項目為 `pass` 且該項沒有 open finding**的結果，前提是 `assetLedger` 的 hash、capture state 與依賴均未變；`fail`、`blocked`、`pending` 或任一受影響依賴變更都必須重做相應檢查。每輪仍要讀回整份 lite DOCX 並執行結構／封裝檢查。
 
 ## 唯一累積 finding ledger
 
@@ -33,10 +36,10 @@ QA 工作區只維護一份跨輪次、跨階段的累積 finding ledger，不�
 
 ## 建置前 inventory 與共用 builder
 
-呼叫 builder 前，以原始 UI 證據逐項建立欄位／表頭／必填標記／可見選項 inventory，回指具體 `captureState.id` 和 manifest source。只寫實際觀察到的項目；必填狀態無法確認時寫「待確認」，不能填「否」或補未觀察欄位。每欄用途按該畫面具體描述，不能用同一句泛用文字代替不同 controls。
+呼叫 builder 前，以同一 `scopeMatrix` 和原始 UI 證據逐項建立欄位／表頭／必填標記／可見選項 `fieldInventory`，回指具體 `captureState.id` 和 manifest source。只寫實際觀察到的項目；必填狀態無法確認時寫「待確認」，不能填「否」或補未觀察欄位。每欄用途按該畫面具體描述，不能用同一句泛用文字代替不同 controls。呼叫 builder 前完成必要欄位的來源與條件核對；仍未知就保留 `unknown`，不能由模板補齊。
 
 使用一個已檢查的 builder 套用頁面、表格、真正 Word numbering 和圖片尺寸規則；各章不能各自手寫不同格式。`chapter` 與相容的 `chapters[]` manifest 形狀依 builder 現行 schema，不能在文件中另造不受腳本支援的欄位。
 
 ## 回歸紀錄
 
-QA record 另記錄同類 finding 是否再次出現、已知回歸、代表圖／批次數、完整重建次數、內容 preview 次數、實際整改輪次、freeze／checkpoint 路徑和 reviewer 狀態。沒有完成直接圖片檢視、整份最終讀回或獨立審核時，依規範標為 pending／blocked／draft；缺 renderer 不列入 blocker。
+QA record 另記錄每個 phase 的 `startedAt`／`endedAt` 或 `elapsed`、`activeTime`／`waitTime`、`parallelGroup`、同類 finding 是否再次出現、返工原因、局部修復／完整重建次數、已知回歸、代表圖／批次數、內容 preview 次數、實際整改輪次、freeze／checkpoint 路徑和 reviewer 狀態。並行階段的共享等待只計一次，不把同一段等待時間重複加到各模型；這些是效率觀測值，不是跳過必要驗收的時間配額。沒有完成直接圖片檢視、整份最終讀回或獨立審核時，依規範標為 pending／blocked／draft；缺 renderer 不列入 blocker。
